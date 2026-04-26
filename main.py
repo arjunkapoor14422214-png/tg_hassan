@@ -44,7 +44,13 @@ AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini").strip()
 AI_STYLE_PROMPT = os.getenv(
     "AI_STYLE_PROMPT",
-    "Ð¡Ð´ÐµÐ»Ð°Ð¹ Ð»ÐµÐ³ÐºÐ¸Ð¹ Ñ€ÐµÑ€Ð°Ð¹Ñ‚ Ñ‚ÐµÐºÑÑ‚Ð° Ð´Ð»Ñ Telegram. Ð¡Ð¾Ñ…Ñ€Ð°Ð½Ð¸ ÑÐ¼Ñ‹ÑÐ», Ñ„Ð°ÐºÑ‚Ñ‹, ÑÑÑ‹Ð»ÐºÐ¸ Ð¸ ÑÐ¼Ð¾Ð´Ð·Ð¸.",
+    (
+        "Rewrite the source into polished Arabic Telegram copy for a betting channel. "
+        "Make it sound native, confident, clean, and premium. "
+        "Keep facts, odds, teams, and promo meaning accurate. "
+        "Use short punchy lines, natural Arabic rhythm, and elegant wording. "
+        "No hashtags, no markdown, no filler, and no fake claims."
+    ),
 ).strip()
 AI_TARGET_LANG = os.getenv("AI_TARGET_LANG", "").strip()
 PROMOCODE_TEXT = os.getenv("PROMOCODE_TEXT", "Promocode: NILE").strip() or "Promocode: NILE"
@@ -230,25 +236,43 @@ def finalize_post_text(text, is_album=False):
 def choose_line_emoji(line):
     lowered = (line or "").lower()
 
-    if "apk" in lowered:
+    if "apk" in lowered or "تحميل" in lowered or "تنزيل" in lowered or "تطبيق" in lowered or "اندرويد" in lowered or "أندرويد" in lowered:
         return "📲"
-    if "bonus" in lowered or "promo" in lowered or "promocode" in lowered or "promokod" in lowered:
+    if (
+        "bonus" in lowered
+        or "promo" in lowered
+        or "promocode" in lowered
+        or "promokod" in lowered
+        or "بونص" in lowered
+        or "مكاف" in lowered
+        or "برومو" in lowered
+        or "كود" in lowered
+    ):
         return "🎁"
     if "1xbet" in lowered or "linebet" in lowered or "dbbet" in lowered or "betkom" in lowered:
         return "🔥"
-    if "stavka" in lowered or "ставк" in lowered or "express" in lowered or "экспресс" in lowered:
+    if (
+        "stavka" in lowered
+        or "ставк" in lowered
+        or "express" in lowered
+        or "экспресс" in lowered
+        or "رهان" in lowered
+        or "ترشيح" in lowered
+        or "اختيار" in lowered
+        or "توقع" in lowered
+    ):
         return "🎯"
-    if "futbol" in lowered or "football" in lowered or "футбол" in lowered:
+    if "futbol" in lowered or "football" in lowered or "футбол" in lowered or "كرة القدم" in lowered or "مباراة" in lowered:
         return "⚽"
-    if "tennis" in lowered or "теннис" in lowered:
+    if "tennis" in lowered or "теннис" in lowered or "تنس" in lowered:
         return "🎾"
-    if "basket" in lowered or "баскет" in lowered:
+    if "basket" in lowered or "баскет" in lowered or "كرة السلة" in lowered or "سلة" in lowered:
         return "🏀"
-    if "yuklab" in lowered or "скач" in lowered or "download" in lowered:
+    if "yuklab" in lowered or "скач" in lowered or "download" in lowered or "تحميل" in lowered or "تنزيل" in lowered:
         return "⬇️"
-    if "koeff" in lowered or "коэфф" in lowered or "kf" in lowered:
+    if "koeff" in lowered or "коэфф" in lowered or "kf" in lowered or "اودز" in lowered or "أودز" in lowered or "معامل" in lowered:
         return "💎"
-    return "✨"
+    return ""
 
 
 def add_thematic_emojis(text):
@@ -261,9 +285,26 @@ def add_thematic_emojis(text):
         if re.match(r"^[\W_]*[\U0001F300-\U0001FAFF]", line):
             styled_lines.append(line)
             continue
-        styled_lines.append(f"{choose_line_emoji(line)} {line}")
+        emoji = choose_line_emoji(line)
+        if emoji:
+            styled_lines.append(f"{emoji} {line}")
+        else:
+            styled_lines.append(line)
 
     return "\n".join(styled_lines).strip()
+
+
+def normalize_ai_text(text):
+    body = (text or "").strip()
+    if not body:
+        return body
+
+    body = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", body)
+    body = re.sub(r"\s*```$", "", body)
+    body = body.strip().strip('"').strip("'").strip()
+    body = body.replace("\r\n", "\n")
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body
 
 
 def process_text_with_ai(text):
@@ -279,20 +320,22 @@ def process_text_with_ai(text):
 
     user_prompt = text
     if AI_TARGET_LANG:
-        user_prompt = f"Ð¯Ð·Ñ‹Ðº Ñ€ÐµÐ·ÑƒÐ»ÑŒÑ‚Ð°Ñ‚Ð°: {AI_TARGET_LANG}\n\n{text}"
+        user_prompt = f"Target language: {AI_TARGET_LANG}\n\n{text}"
 
     system_prompt = (
         f"{AI_STYLE_PROMPT}\n\n"
-        "Keep bright normal unicode emojis in the text. "
-        "Replace premium or custom emojis with bright normal unicode emojis that match the meaning. "
-        "Use emojis in every meaningful line when it looks natural. "
-        "APK lines should look vivid with phone, android, download emojis. "
-        "Bonus or promocode lines should look vivid with gift, ticket, fire, money emojis. "
-        "Sports lines should use fitting sports emojis. "
-        "Keep facts, teams, odds, promo meaning, and useful details. "
-        "Remove filler words and make the text cleaner and nicer. "
-        "Do not add footer links or bonus buttons text. "
-        "Return only the main rewritten body."
+        "Write only the final Telegram post body. "
+        "Output in the requested target language when it is provided. "
+        "Keep facts, teams, odds, promo details, and intent accurate. "
+        "Do not invent scores, odds, claims, or urgency. "
+        "Use natural Arabic that reads like a real channel post, not a literal translation. "
+        "Make the text compact, stylish, and easy to scan in Telegram. "
+        "Prefer 3 to 7 short lines with good rhythm. "
+        "Use clean unicode emojis selectively, not on every line. "
+        "Preserve brand names, APK mentions, and useful English terms when needed. "
+        "Do not add hashtags, markdown, bullet lists, explanations, or quotation marks around the answer. "
+        "Do not add footer links or button labels. "
+        "Return only the rewritten body."
     )
 
     payload = {
@@ -328,6 +371,7 @@ def process_text_with_ai(text):
             .get("content", "")
             .strip()
         )
+        ai_text = normalize_ai_text(ai_text)
 
         if not ai_text:
             print("AI Ð²ÐµÑ€Ð½ÑƒÐ» Ð¿ÑƒÑÑ‚Ð¾Ð¹ Ñ‚ÐµÐºÑÑ‚, Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÑŽ Ð¸ÑÑ…Ð¾Ð´Ð½Ñ‹Ð¹")
