@@ -288,6 +288,15 @@ def contains_target_company_reference(text):
     )
 
 
+def is_target_partner_line(line):
+    body = (line or "").strip()
+    if not body:
+        return False
+    if not line_has_registration_context(body):
+        return False
+    return contains_target_company_reference(body)
+
+
 def line_has_foreign_bookmaker_mention(line, partner_fallback=False):
     body = line or ""
     if not body.strip():
@@ -484,6 +493,9 @@ def prepare_text_for_ai(text, inline_partners=False):
             cleaned_lines.append("")
             continue
 
+        if is_target_partner_line(line):
+            continue
+
         if SOURCE_LINK_PATTERN.search(line):
             continue
 
@@ -511,6 +523,15 @@ def remove_source_brand_residue(text):
     body = strip_source_markers(text)
     body = SOURCE_LINK_PATTERN.sub("", body)
     body = replace_source_brand_mentions(body)
+
+    cleaned_lines = []
+    for raw_line in body.splitlines():
+        line = (raw_line or "").strip()
+        if is_target_partner_line(line):
+            continue
+        cleaned_lines.append(raw_line)
+
+    body = "\n".join(cleaned_lines)
     body = re.sub(r"\n{3,}", "\n\n", body)
     return body.strip()
 
