@@ -174,6 +174,12 @@ SOURCE_BRAND_RULES = [
     (re.compile(r"(?i)\bmega\s*pari\b"), 3),
     (re.compile(r"(?i)\bmegapari\b"), 3),
 ]
+COMMON_FOREIGN_BOOKMAKER_PATTERN = re.compile(
+    r"(?i)\b(?:bet365|1win|mostbet|parimatch|fonbet|marathonbet|leon|betwinner|vbet|stake|betano|betway|dafabet|roobet|pin[\s-]*up|pinup)\b"
+)
+GENERIC_PARTNER_BOOKMAKER_PATTERN = re.compile(
+    r"(?i)\b(?:[a-z0-9]{2,}xbet|[a-z0-9]{2,}pari|[a-z0-9]{2,}bet)\b"
+)
 
 CYRILLIC_TITLES = [
     "ÐœÐ¾Ñ ÑÑ‚Ð°Ð²ÐºÐ° ÑÐµÐ³Ð¾Ð´Ð½Ñ:",
@@ -215,6 +221,30 @@ def get_source_signature(entity):
     return f"{entity_id}:{source_name}"
 
 
+def normalize_brand_key(value):
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def get_primary_target_company():
+    for company in TARGET_COMPANIES:
+        if (company.get("name") or "").strip() and (company.get("url") or "").strip():
+            return company
+    return {"name": "LUCKYPARI", "url": BUTTON3_URL, "emoji": "💛"}
+
+
+TARGET_COMPANY_KEYS = {
+    normalize_brand_key(company.get("name"))
+    for company in TARGET_COMPANIES
+    if normalize_brand_key(company.get("name"))
+}
+KNOWN_SOURCE_BRAND_KEYS = {
+    "melbet",
+    "1xbet",
+    "pariland",
+    "megapari",
+}
+
+
 def build_partner_block():
     lines = []
 
@@ -228,6 +258,13 @@ def build_partner_block():
     return "\n\n".join(lines).strip()
 
 
+def build_primary_partner_block():
+    primary_company = get_primary_target_company()
+    if not (primary_company.get("name") or "").strip():
+        return ""
+    return "[[PARTNER1]]"
+
+
 def line_has_partner_context(line):
     lowered = (line or "").lower()
     return any(keyword in lowered for keyword in PARTNER_LINE_KEYWORDS)
@@ -238,13 +275,53 @@ def line_has_registration_context(line):
     return any(keyword in lowered for keyword in REGISTRATION_LINE_KEYWORDS)
 
 
+def contains_target_company_reference(text):
+    body = text or ""
+    normalized_body = normalize_brand_key(body)
+    if any(key in normalized_body for key in TARGET_COMPANY_KEYS):
+        return True
+
+    return any(
+        (company.get("url") or "").strip()
+        and (company.get("url") or "").strip() in body
+        for company in TARGET_COMPANIES
+    )
+
+
+def line_has_foreign_bookmaker_mention(line, partner_fallback=False):
+    body = line or ""
+    if not body.strip():
+        return False
+
+    if COMMON_FOREIGN_BOOKMAKER_PATTERN.search(body):
+        return True
+
+    if not partner_fallback:
+        return False
+
+    for match in GENERIC_PARTNER_BOOKMAKER_PATTERN.finditer(body):
+        brand_key = normalize_brand_key(match.group(0))
+        if not brand_key:
+            continue
+        if brand_key in TARGET_COMPANY_KEYS or brand_key in KNOWN_SOURCE_BRAND_KEYS:
+            continue
+        return True
+
+    return False
+
+
 def source_mentions_brands(text):
     body = text or ""
     return any(pattern.search(body) for pattern, _ in SOURCE_BRAND_RULES)
 
 
+def replace_foreign_bookmaker_mentions(text):
+    primary_name = (get_primary_target_company().get("name") or "").strip() or "LUCKYPARI"
+    return COMMON_FOREIGN_BOOKMAKER_PATTERN.sub(primary_name, text or "")
+
+
 def replace_source_brand_mentions(text):
-    body = text or ""
+    body = replace_foreign_bookmaker_mentions(text)
     for pattern, target_index in SOURCE_BRAND_RULES:
         replacement = (TARGET_COMPANIES[target_index].get("name") or "").strip() or "منصاتنا"
         body = pattern.sub(replacement, body)
@@ -277,6 +354,9 @@ def has_source_partner_block(text):
         if has_brand and line_has_registration_context(line):
             return True
 
+        if line_has_partner_context(line) and line_has_foreign_bookmaker_mention(line, partner_fallback=True):
+            return True
+
     return False
 
 
@@ -306,11 +386,38 @@ def has_target_partner_block(text):
 
 
 def has_company_mentions(text):
-    return source_mentions_brands(text)
+    return source_mentions_brands(text) or line_has_foreign_bookmaker_mention(text)
 
 
 def has_partner_mentions(text):
     return has_source_partner_block(text)
+
+
+def should_use_primary_partner_fallback(text):
+    body = text or ""
+    if not body.strip():
+        return False
+
+    for raw_line in body.splitlines():
+        line = (raw_line or "").strip()
+        if not line:
+            continue
+
+        if contains_target_company_reference(line):
+            continue
+
+        if line_has_partner_context(line) and line_has_foreign_bookmaker_mention(line, partner_fallback=True):
+            return True
+
+        if (
+            SOURCE_LINK_PATTERN.search(line)
+            and line_has_partner_context(line)
+            and not source_mentions_brands(line)
+            and not contains_target_company_reference(line)
+        ):
+            return True
+
+    return False
 
 
 def is_ignored_code_line(line):
@@ -690,6 +797,7 @@ def process_text_with_ai(text):
 def build_final_text(post_data, use_ai=True):
     source_text = post_data.get("text", "")
     inline_partners = bool(post_data.get("inline_partners"))
+    primary_partner_only = bool(post_data.get("primary_partner_only"))
     ai_input = prepare_text_for_ai(source_text, inline_partners=inline_partners)
 
     text = post_data.get("processed_text")
@@ -700,7 +808,7 @@ def build_final_text(post_data, use_ai=True):
     text = add_thematic_emojis(text)
 
     if inline_partners and not has_target_partner_block(text):
-        partner_block = build_partner_block()
+        partner_block = build_primary_partner_block() if primary_partner_only else build_partner_block()
         if partner_block:
             text = f"{text}\n\n{partner_block}".strip()
 
@@ -1172,6 +1280,7 @@ async def get_post_data(client, entity):
 
     inline_partners = has_partner_mentions(text)
     has_companies = has_company_mentions(text)
+    primary_partner_only = should_use_primary_partner_fallback(text)
 
     return {
         "key": get_post_key(last_msg),
@@ -1181,6 +1290,7 @@ async def get_post_data(client, entity):
         "media_count": count_supported_media(post_messages),
         "source_message_id": last_msg.id,
         "inline_partners": inline_partners,
+        "primary_partner_only": primary_partner_only,
         "with_buttons": not inline_partners and not has_companies,
     }
 
@@ -1206,6 +1316,7 @@ async def build_post_data_from_messages(client, messages):
 
     inline_partners = has_partner_mentions(text)
     has_companies = has_company_mentions(text)
+    primary_partner_only = should_use_primary_partner_fallback(text)
 
     return {
         "key": get_post_key(last_msg),
@@ -1215,6 +1326,7 @@ async def build_post_data_from_messages(client, messages):
         "media_count": count_supported_media(post_messages),
         "source_message_id": last_msg.id,
         "inline_partners": inline_partners,
+        "primary_partner_only": primary_partner_only,
         "with_buttons": not inline_partners and not has_companies,
     }
 
