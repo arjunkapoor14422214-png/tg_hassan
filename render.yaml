@@ -1,0 +1,68 @@
+services:
+  - type: worker
+    name: tg-copy-worker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.13
+      - key: BOT_TOKEN
+        sync: false
+      - key: TARGET_CHANNEL
+        sync: false
+      - key: REVIEW_CHANNEL_ID
+        value: ""
+      - key: SOURCE_CHANNEL
+        sync: false
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: TG_SESSION_STRING
+        sync: false
+      - key: MODERATION_ENABLED
+        value: "false"
+      - key: BUTTON1_TEXT
+        value: "ULTRAPARI BONUS"
+      - key: BUTTON1_URL
+        value: "https://ultrapari.com/ru/registration?tag=d_5299306m_118408c_"
+      - key: BUTTON2_TEXT
+        value: "WINWIN BONUS"
+      - key: BUTTON2_URL
+        value: "https://winwin-624339.top/ru/registration?tag=d_5343420m_94904c_"
+      - key: BUTTON3_TEXT
+        value: "LUCKYPARI BONUS"
+      - key: BUTTON3_URL
+        value: "https://lckypr.com/G4DtDxQ"
+      - key: BUTTON4_TEXT
+        value: "LINEBET BONUS"
+      - key: BUTTON4_URL
+        value: "https://lb-aff.com/L?tag=d_5445297m_22611c_site&site=5445297&ad=22611&r=registration"
+      - key: AI_ENABLED
+        value: "false"
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: "gpt-4.1-mini"
+      - key: AI_STYLE_PROMPT
+        value: "Light Telegram rewrite for Telegram. Keep meaning, facts, links, and emojis."
+      - key: AI_TARGET_LANG
+        value: "Arabic"
+      - key: PROMOCODE_TEXT
+        value: "Promocode: NILE"
+      - key: APK_URL
+        value: "https://t.me/PLATINUM_APK"
+      - key: LUCKYPARI_APK_URL
+        value: "https://lckypr.com/wW5nH61"
+      - key: ULTRAPARI_APK_URL
+        value: "https://refpa42156.com/L?tag=d_5299306m_118431c_&site=5299306&ad=118431"
+      - key: WINWIN_APK_URL
+        value: "https://refpa712080.pro/L?tag=d_5343420m_68383c_&site=5343420&ad=68383"
+      - key: LINEBET_APK_URL
+        value: "https://lb-aff.com/L?tag=d_5445297m_66803c_apk1&site=5445297&ad=66803"
+      - key: ALBUM_CHANNEL_URL
+        value: "https://t.me/PLATINUM_APK"
+      - key: BONUS_BUTTON_MESSAGE
+        value: "Bonusni oling"
