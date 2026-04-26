@@ -1,0 +1,1123 @@
+from dotenv import load_dotenv
+import os
+import asyncio
+import json
+import random
+import re
+import sys
+import requests
+from html import escape
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+
+load_dotenv()
+
+def parse_telegram_peer(value):
+    value = (value or "").strip()
+    if re.fullmatch(r"-?\d+", value):
+        return int(value)
+    return value
+
+
+def normalize_telegram_channel_id(value):
+    value = str(value).strip()
+    if value.startswith("-100") and value[4:].isdigit():
+        return int(value[4:])
+    if re.fullmatch(r"-?\d+", value):
+        return abs(int(value))
+    return None
+
+
+API_ID = os.getenv("TG_API_ID")
+API_HASH = os.getenv("TG_API_HASH")
+SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
+TARGET_CHANNEL = (os.getenv("TARGET_CHANNEL") or "").strip()
+SOURCE_CHANNEL_ENTITY = parse_telegram_peer(SOURCE_CHANNEL)
+REVIEW_CHANNEL_ID = os.getenv("REVIEW_CHANNEL_ID", "").strip()
+if REVIEW_CHANNEL_ID.startswith("100"):
+    REVIEW_CHANNEL_ID = f"-{REVIEW_CHANNEL_ID}"
+MODERATION_ENABLED = os.getenv("MODERATION_ENABLED", "false").strip().lower() == "true"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
+AI_ENABLED = os.getenv("AI_ENABLED", "false").strip().lower() == "true"
+AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
+AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini").strip()
+AI_STYLE_PROMPT = os.getenv(
+    "AI_STYLE_PROMPT",
+    "Ð¡Ð´ÐµÐ»Ð°Ð¹ Ð»ÐµÐ³ÐºÐ¸Ð¹ Ñ€ÐµÑ€Ð°Ð¹Ñ‚ Ñ‚ÐµÐºÑÑ‚Ð° Ð´Ð»Ñ Telegram. Ð¡Ð¾Ñ…Ñ€Ð°Ð½Ð¸ ÑÐ¼Ñ‹ÑÐ», Ñ„Ð°ÐºÑ‚Ñ‹, ÑÑÑ‹Ð»ÐºÐ¸ Ð¸ ÑÐ¼Ð¾Ð´Ð·Ð¸.",
+).strip()
+AI_TARGET_LANG = os.getenv("AI_TARGET_LANG", "").strip()
+PROMOCODE_TEXT = os.getenv("PROMOCODE_TEXT", "Promocode: NILE").strip() or "Promocode: NILE"
+APK_URL = os.getenv("APK_URL", "https://t.me/PLATINUM_APK").strip() or "https://t.me/PLATINUM_APK"
+
+BUTTON1_TEXT = os.getenv("BUTTON1_TEXT")
+BUTTON1_URL = os.getenv("BUTTON1_URL")
+BUTTON2_TEXT = os.getenv("BUTTON2_TEXT")
+BUTTON2_URL = os.getenv("BUTTON2_URL")
+BUTTON3_TEXT = os.getenv("BUTTON3_TEXT", "LUCKYPARI BONUS").strip()
+BUTTON3_URL = os.getenv("BUTTON3_URL", "https://lckypr.com/G4DtDxQ").strip()
+BUTTON4_TEXT = os.getenv("BUTTON4_TEXT", "LINEBET BONUS").strip()
+BUTTON4_URL = os.getenv("BUTTON4_URL", "https://lb-aff.com/L?tag=d_5445297m_22611c_site&site=5445297&ad=22611&r=registration").strip()
+
+LUCKYPARI_APK_URL = os.getenv("LUCKYPARI_APK_URL", "https://lckypr.com/wW5nH61").strip()
+ULTRAPARI_APK_URL = os.getenv("ULTRAPARI_APK_URL", "https://refpa42156.com/L?tag=d_5299306m_118431c_&site=5299306&ad=118431").strip()
+WINWIN_APK_URL = os.getenv("WINWIN_APK_URL", "https://refpa712080.pro/L?tag=d_5343420m_68383c_&site=5343420&ad=68383").strip()
+LINEBET_APK_URL = os.getenv("LINEBET_APK_URL", "https://lb-aff.com/L?tag=d_5445297m_66803c_apk1&site=5445297&ad=66803").strip()
+ALBUM_CHANNEL_URL = os.getenv("ALBUM_CHANNEL_URL", "https://t.me/PLATINUM_APK").strip() or "https://t.me/PLATINUM_APK"
+BONUS_BUTTON_MESSAGE = os.getenv("BONUS_BUTTON_MESSAGE", "Bonusni oling").strip() or "Bonusni oling"
+REVIEW_MODE = MODERATION_ENABLED and bool(REVIEW_CHANNEL_ID)
+
+TEXT_LINK_TOKENS = [
+    ("[[APK1]]", "LuckyPari APK", LUCKYPARI_APK_URL),
+    ("[[APK2]]", "UltraPari APK", ULTRAPARI_APK_URL),
+    ("[[APK3]]", "WinWin APK", WINWIN_APK_URL),
+    ("[[APK4]]", "Linebet APK", LINEBET_APK_URL),
+]
+
+BUTTON_LINKS = [
+    (BUTTON1_TEXT, BUTTON1_URL),
+    (BUTTON2_TEXT, BUTTON2_URL),
+    (BUTTON3_TEXT, BUTTON3_URL),
+    (BUTTON4_TEXT, BUTTON4_URL),
+]
+
+CYRILLIC_TITLES = [
+    "ÐœÐ¾Ñ ÑÑ‚Ð°Ð²ÐºÐ° ÑÐµÐ³Ð¾Ð´Ð½Ñ:",
+    "Ð¢Ð¾Ð¿ ÑÑ‚Ð°Ð²ÐºÐ° Ð´Ð½Ñ:",
+    "Ð¡ÐµÐ³Ð¾Ð´Ð½Ñ Ð±ÐµÑ€Ñƒ Ð²Ð¾Ñ‚ ÑÑ‚Ð¾:",
+    "Ð¡Ñ‚Ð°Ð²ÐºÐ° Ð½Ð° ÑÐµÐ³Ð¾Ð´Ð½Ñ:",
+    "Ð—Ð°Ð±Ð¸Ñ€Ð°ÑŽ Ñ‚Ð°ÐºÐ¾Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚:",
+]
+
+LATIN_TITLES = [
+    "Bugungi top stavka:",
+    "Bugun men shuni tanladim:",
+    "Kun stavkasi:",
+    "Mening bugungi tanlovim:",
+    "Bugungi stavkam:",
+]
+
+STATE_FILE = "data/state.json"
+PENDING_FILE = "data/pending.json"
+CHECK_INTERVAL = 10
+
+
+def safe_console_text(value):
+    text = str(value)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def get_source_signature(entity):
+    source_name = (SOURCE_CHANNEL or "").strip().lower()
+    entity_id = getattr(entity, "id", "")
+    return f"{entity_id}:{source_name}"
+
+
+async def resolve_source_entity(client):
+    if not isinstance(SOURCE_CHANNEL_ENTITY, int):
+        return await client.get_entity(SOURCE_CHANNEL_ENTITY)
+
+    normalized_source_id = normalize_telegram_channel_id(SOURCE_CHANNEL_ENTITY)
+
+    async for dialog in client.iter_dialogs():
+        entity = getattr(dialog, "entity", None)
+        if getattr(entity, "id", None) == normalized_source_id:
+            return entity
+
+    return await client.get_entity(SOURCE_CHANNEL_ENTITY)
+
+
+def build_reply_markup():
+    rows = []
+
+    for text, url in BUTTON_LINKS:
+        if text and url:
+            rows.append([{"text": text, "url": url}])
+
+    if not rows:
+        return None
+
+    return {"inline_keyboard": rows}
+
+
+def build_moderation_markup(post_key):
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Approve", "callback_data": f"approve:{post_key}"},
+                {"text": "Reject", "callback_data": f"reject:{post_key}"},
+            ]
+        ]
+    }
+
+
+def apply_promocode_rule(text):
+    text = (text or "").strip()
+    promo_line_pattern = re.compile(
+        r"(?im)^.*(?:promo\s*code|promocode|promokod|promo-code)\s*[:ï¼š\-â€“â€”]?\s*.*$"
+    )
+
+    if promo_line_pattern.search(text):
+        return promo_line_pattern.sub(PROMOCODE_TEXT, text).strip()
+
+    if not text:
+        return PROMOCODE_TEXT
+
+    return f"{text}\n\n{PROMOCODE_TEXT}"
+
+
+def prepare_telegram_text(text, limit=None):
+    text = text if text else "[Ð±ÐµÐ· Ñ‚ÐµÐºÑÑ‚Ð°]"
+    if limit:
+        text = text[:limit]
+
+    safe_text = escape(text)
+    apk_link = f'<a href="{escape(APK_URL, quote=True)}">APK</a>'
+    safe_text = re.sub(r"\bAPK\b", apk_link, safe_text, flags=re.IGNORECASE)
+
+    for token, label, url in TEXT_LINK_TOKENS:
+        safe_text = safe_text.replace(
+            escape(token),
+            f'<a href="{escape(url, quote=True)}">{escape(label)}</a>',
+        )
+
+    return safe_text
+
+
+def detect_text_language(text):
+    cyrillic_count = sum(1 for char in text.lower() if "Ð°" <= char <= "Ñ" or char == "Ñ‘")
+    latin_count = sum(1 for char in text.lower() if "a" <= char <= "z")
+    return "cyrillic" if cyrillic_count > latin_count else "latin"
+
+
+def build_post_title(text):
+    titles = CYRILLIC_TITLES if detect_text_language(text) == "cyrillic" else LATIN_TITLES
+    return random.choice(titles)
+
+
+def add_offer_footer(text):
+    footer_tokens = [token for token, _, _ in TEXT_LINK_TOKENS]
+
+    if any(token in text for token in footer_tokens):
+        return text
+
+    footer_block = "\n".join(footer_tokens)
+    return f"{text}\n\n{footer_block}".strip()
+
+
+def add_album_footer(text):
+    body = (text or "").strip()
+
+    if ALBUM_CHANNEL_URL in body:
+        return body
+
+    if not body:
+        return ALBUM_CHANNEL_URL
+
+    return f"{body}\n\n{ALBUM_CHANNEL_URL}".strip()
+
+
+def finalize_post_text(text, is_album=False):
+    body = (text or "").strip()
+
+    body = apply_promocode_rule(body)
+    if is_album:
+        return add_offer_footer(body)
+    return body
+
+
+def choose_line_emoji(line):
+    lowered = (line or "").lower()
+
+    if "apk" in lowered:
+        return "📲"
+    if "bonus" in lowered or "promo" in lowered or "promocode" in lowered or "promokod" in lowered:
+        return "🎁"
+    if "1xbet" in lowered or "linebet" in lowered or "dbbet" in lowered or "betkom" in lowered:
+        return "🔥"
+    if "stavka" in lowered or "ставк" in lowered or "express" in lowered or "экспресс" in lowered:
+        return "🎯"
+    if "futbol" in lowered or "football" in lowered or "футбол" in lowered:
+        return "⚽"
+    if "tennis" in lowered or "теннис" in lowered:
+        return "🎾"
+    if "basket" in lowered or "баскет" in lowered:
+        return "🏀"
+    if "yuklab" in lowered or "скач" in lowered or "download" in lowered:
+        return "⬇️"
+    if "koeff" in lowered or "коэфф" in lowered or "kf" in lowered:
+        return "💎"
+    return "✨"
+
+
+def add_thematic_emojis(text):
+    lines = [(line or "").strip() for line in (text or "").splitlines()]
+    styled_lines = []
+
+    for line in lines:
+        if not line:
+            continue
+        if re.match(r"^[\W_]*[\U0001F300-\U0001FAFF]", line):
+            styled_lines.append(line)
+            continue
+        styled_lines.append(f"{choose_line_emoji(line)} {line}")
+
+    return "\n".join(styled_lines).strip()
+
+
+def process_text_with_ai(text):
+    if not text:
+        return text
+
+    if not AI_ENABLED:
+        return text
+
+    if not AI_API_KEY:
+        print("AI Ð²Ñ‹ÐºÐ»ÑŽÑ‡ÐµÐ½: Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½ AI_API_KEY, Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÑŽ Ð¸ÑÑ…Ð¾Ð´Ð½Ñ‹Ð¹ Ñ‚ÐµÐºÑÑ‚")
+        return text
+
+    user_prompt = text
+    if AI_TARGET_LANG:
+        user_prompt = f"Ð¯Ð·Ñ‹Ðº Ñ€ÐµÐ·ÑƒÐ»ÑŒÑ‚Ð°Ñ‚Ð°: {AI_TARGET_LANG}\n\n{text}"
+
+    system_prompt = (
+        f"{AI_STYLE_PROMPT}\n\n"
+        "Keep bright normal unicode emojis in the text. "
+        "Replace premium or custom emojis with bright normal unicode emojis that match the meaning. "
+        "Use emojis in every meaningful line when it looks natural. "
+        "APK lines should look vivid with phone, android, download emojis. "
+        "Bonus or promocode lines should look vivid with gift, ticket, fire, money emojis. "
+        "Sports lines should use fitting sports emojis. "
+        "Keep facts, teams, odds, promo meaning, and useful details. "
+        "Remove filler words and make the text cleaner and nicer. "
+        "Do not add footer links or bonus buttons text. "
+        "Return only the main rewritten body."
+    )
+
+    payload = {
+        "model": AI_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.4,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {AI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=90,
+        )
+        data = response.json()
+
+        if response.status_code != 200:
+            print("AI Ð¾ÑˆÐ¸Ð±ÐºÐ°:", response.status_code, data)
+            return text
+
+        ai_text = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+
+        if not ai_text:
+            print("AI Ð²ÐµÑ€Ð½ÑƒÐ» Ð¿ÑƒÑÑ‚Ð¾Ð¹ Ñ‚ÐµÐºÑÑ‚, Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÑŽ Ð¸ÑÑ…Ð¾Ð´Ð½Ñ‹Ð¹")
+            return text
+
+        print("AI Ñ‚ÐµÐºÑÑ‚ Ð¿Ð¾Ð´Ð³Ð¾Ñ‚Ð¾Ð²Ð»ÐµÐ½")
+        return ai_text
+
+    except Exception as e:
+        print("AI Ð¾ÑˆÐ¸Ð±ÐºÐ°:", str(e))
+        return text
+
+
+
+def send_text(text, with_buttons=False, chat_id=None, reply_markup=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    normalized_text = text
+
+    if text in {"ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", "Ã°Å¸â€˜â€¡ Ãâ€˜ÃÂ¾ÃÂ½Ã‘Æ’Ã‘ÂÃÂ½Ã‘â€¹ÃÂµ Ã‘ÂÃ‘ÂÃ‘â€¹ÃÂ»ÃÂºÃÂ¸"}:
+        normalized_text = BONUS_BUTTON_MESSAGE
+
+    payload = {
+        "chat_id": chat_id or TARGET_CHANNEL,
+        "text": prepare_telegram_text(normalized_text),
+        "disable_web_page_preview": True,
+        "parse_mode": "HTML",
+    }
+
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    elif with_buttons:
+        button_markup = build_reply_markup()
+        if button_markup:
+            payload["reply_markup"] = button_markup
+
+    return requests.post(url, json=payload, timeout=60)
+
+
+
+def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_markup=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+
+    data = {
+        "chat_id": chat_id or TARGET_CHANNEL,
+        "caption": prepare_telegram_text(caption, limit=1024),
+        "parse_mode": "HTML",
+    }
+
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+    elif with_buttons:
+        button_markup = build_reply_markup()
+        if button_markup:
+            data["reply_markup"] = json.dumps(button_markup, ensure_ascii=False)
+
+    with open(photo_path, "rb") as photo_file:
+        files = {"photo": photo_file}
+        return requests.post(url, data=data, files=files, timeout=120)
+
+
+
+def send_media_group(photo_paths, caption, chat_id=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMediaGroup"
+
+    media = []
+    opened_files = {}
+
+    try:
+        for i, photo_path in enumerate(photo_paths):
+            file_key = f"photo{i}"
+            opened_files[file_key] = open(photo_path, "rb")
+
+            item = {
+                "type": "photo",
+                "media": f"attach://{file_key}",
+            }
+
+            if i == 0 and caption:
+                item["caption"] = prepare_telegram_text(caption, limit=1024)
+                item["parse_mode"] = "HTML"
+
+            media.append(item)
+
+        data = {
+            "chat_id": chat_id or TARGET_CHANNEL,
+            "media": json.dumps(media, ensure_ascii=False),
+        }
+
+        return requests.post(url, data=data, files=opened_files, timeout=180)
+
+    finally:
+        for f in opened_files.values():
+            f.close()
+
+
+def send_poll(question, options, chat_id=None, is_anonymous=False, allows_multiple_answers=False):
+    payload = {
+        "chat_id": chat_id or TARGET_CHANNEL,
+        "question": question[:300],
+        "options": options[:10],
+        "is_anonymous": is_anonymous,
+        "allows_multiple_answers": allows_multiple_answers,
+    }
+    return bot_api("sendPoll", payload)
+
+
+
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {}
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+
+def save_state(state):
+    os.makedirs("data", exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def load_pending():
+    if not os.path.exists(PENDING_FILE):
+        return {}
+
+    try:
+        with open(PENDING_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_pending(pending):
+    os.makedirs("data", exist_ok=True)
+    with open(PENDING_FILE, "w", encoding="utf-8") as f:
+        json.dump(pending, f, ensure_ascii=False, indent=2)
+
+
+def bot_api(method, payload):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    return requests.post(url, json=payload, timeout=60)
+
+
+
+def get_post_key(message):
+    if message.grouped_id:
+        return f"group_{message.grouped_id}"
+    return f"msg_{message.id}"
+
+
+def utf16_offset_to_index(text, offset):
+    if offset <= 0:
+        return 0
+
+    units_seen = 0
+    for index, char in enumerate(text):
+        char_units = 2 if ord(char) > 0xFFFF else 1
+        if units_seen + char_units > offset:
+            return index
+        units_seen += char_units
+        if units_seen == offset:
+            return index + 1
+
+    return len(text)
+
+
+def choose_custom_emoji_replacement(text, index):
+    line_start = text.rfind("\n", 0, index) + 1
+    line_end = text.find("\n", index)
+    if line_end == -1:
+        line_end = len(text)
+
+    line = text[line_start:line_end].lower()
+
+    if "express" in line or "ekspress" in line or "ÑÐºÑÐ¿Ñ€ÐµÑÑ" in line:
+        return "🔥"
+    if "vip" in line:
+        return "👑"
+    if "1xbet" in line or "1x" in line:
+        return "💙"
+    if "dbbet" in line or "db bet" in line:
+        return "🖤"
+    if "betkom" in line:
+        return "🟢"
+    if "promo" in line or "promokod" in line or "kod:" in line or "ÐºÐ¾Ð´" in line:
+        return "🎟️"
+    if "bonus" in line or "aksiya" in line or "akciya" in line or "Ð°ÐºÑ†Ð¸Ñ" in line:
+        return "🎁"
+    if "apk" in line:
+        return "📲"
+    if "football" in line or "futbol" in line or "Ñ„ÑƒÑ‚Ð±Ð¾Ð»" in line:
+        return "⚽"
+    if "basket" in line or "Ð±Ð°ÑÐºÐµÑ‚" in line:
+        return "🏀"
+    if "tennis" in line or "Ñ‚ÐµÐ½Ð½Ð¸Ñ" in line:
+        return "🎾"
+
+    return ""
+
+
+def replace_custom_emojis(text, entities):
+    if not text or not entities:
+        return text
+
+    replacements = []
+    for entity in entities:
+        if entity.__class__.__name__ != "MessageEntityCustomEmoji":
+            continue
+
+        start = utf16_offset_to_index(text, entity.offset)
+        end = utf16_offset_to_index(text, entity.offset + entity.length)
+        replacement = choose_custom_emoji_replacement(text, start)
+        replacements.append((start, end, replacement))
+
+    if not replacements:
+        return text
+
+    for start, end, replacement in sorted(replacements, reverse=True):
+        before = text[:start]
+        after = text[end:]
+        prefix = "" if not before or before.endswith((" ", "\n")) else " "
+        suffix = "" if not after or after.startswith((" ", "\n", ".", ",", ":", ";", "!", "?")) else " "
+        text = before + prefix + replacement + suffix + after
+
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    print("Custom emoji replaced:", len(replacements))
+    return text
+
+
+def get_message_text(message):
+    text = message.raw_text or ""
+    return replace_custom_emojis(text, getattr(message, "entities", None))
+
+
+def is_service_message(message):
+    return getattr(message, "action", None) is not None
+
+
+def get_poll_data(message):
+    media = getattr(message, "media", None)
+    poll_wrapper = getattr(media, "poll", None)
+    poll = getattr(poll_wrapper, "poll", None)
+
+    if not poll:
+        return None
+
+    answers = []
+    for answer in getattr(poll, "answers", []) or []:
+        answer_text = getattr(answer, "text", "")
+        if answer_text:
+            answers.append(answer_text)
+
+    if len(answers) < 2:
+        return None
+
+    question = getattr(poll, "question", "") or ""
+    return {
+        "question": question,
+        "options": answers,
+        "multiple_choice": bool(getattr(poll, "multiple_choice", False)),
+        "is_quiz": bool(getattr(poll, "quiz", False)),
+    }
+
+
+def has_video_media(message):
+    if getattr(message, "video", None):
+        return True
+
+    media = getattr(message, "media", None)
+    document = getattr(media, "document", None)
+    mime_type = getattr(document, "mime_type", "") if document else ""
+    return mime_type.startswith("video/")
+
+
+def has_downloadable_image(message):
+    if getattr(message, "photo", None):
+        return True
+
+    media = getattr(message, "media", None)
+    document = getattr(media, "document", None)
+    mime_type = getattr(document, "mime_type", "") if document else ""
+    return mime_type.startswith("image/")
+
+
+def has_file_media(message):
+    media = getattr(message, "media", None)
+    document = getattr(media, "document", None)
+    if not document:
+        return False
+
+    mime_type = getattr(document, "mime_type", "") or ""
+    if mime_type.startswith("image/") or mime_type.startswith("video/"):
+        return False
+    return True
+
+
+def should_skip_post(messages):
+    post_messages = messages or []
+    if not post_messages:
+        return True
+
+    if any(is_service_message(message) for message in post_messages):
+        print("Skip reason: service message")
+        return True
+
+    if any(get_poll_data(message) for message in post_messages):
+        print("Skip reason: poll")
+        return True
+
+    if any(has_video_media(message) for message in post_messages):
+        print("Skip reason: video")
+        return True
+
+    if any(has_file_media(message) for message in post_messages):
+        print("Skip reason: file")
+        return True
+
+    if count_downloadable_images(post_messages) == 0:
+        print("Skip reason: no image")
+        return True
+
+    return False
+
+
+def cleanup_photo_paths(photo_paths):
+    for photo_path in set(photo_paths or []):
+        if not photo_path:
+            continue
+        try:
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+        except Exception as e:
+            print("Cleanup warning:", str(e))
+
+
+def cleanup_temp_media_dir():
+    os.makedirs("data", exist_ok=True)
+    temp_prefixes = ("photo_", "document_")
+    temp_suffixes = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4")
+
+    for file_name in os.listdir("data"):
+        if not file_name.startswith(temp_prefixes):
+            continue
+        if not file_name.lower().endswith(temp_suffixes):
+            continue
+
+        file_path = os.path.join("data", file_name)
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            print("Startup cleanup warning:", str(e))
+
+
+async def get_latest_post_key(client, entity):
+    messages = await client.get_messages(entity, limit=1)
+    if not messages:
+        return None
+    return get_post_key(messages[0])
+
+
+async def rebuild_post_media(client, entity, post_data):
+    photo_paths = post_data.get("photo_paths") or []
+    if photo_paths and all(os.path.exists(path) for path in photo_paths):
+        return post_data
+
+    message_id = post_data.get("source_message_id")
+    if not message_id:
+        return post_data
+
+    source_message = await client.get_messages(entity, ids=message_id)
+    if not source_message:
+        return post_data
+
+    post_messages = [source_message]
+    if source_message.grouped_id:
+        nearby_ids = list(range(max(1, message_id - 10), message_id + 11))
+        nearby_messages = await client.get_messages(entity, ids=nearby_ids)
+        album_messages = [
+            message
+            for message in nearby_messages
+            if message and message.grouped_id == source_message.grouped_id
+        ]
+        if album_messages:
+            album_messages.sort(key=lambda message: message.id)
+            post_messages = album_messages
+
+    rebuilt_paths = []
+    for message in post_messages:
+        if has_downloadable_image(message):
+            photo_path = await client.download_media(message, file="data/")
+            if photo_path:
+                rebuilt_paths.append(photo_path)
+
+    rebuilt_post = dict(post_data)
+    rebuilt_post["photo_paths"] = rebuilt_paths
+    return rebuilt_post
+
+
+def count_downloadable_images(messages):
+    return sum(1 for message in messages if has_downloadable_image(message))
+
+
+
+async def get_post_data(client, entity):
+    messages = await client.get_messages(entity, limit=1)
+
+    if not messages:
+        return None
+
+    last_msg = messages[0]
+    post_messages = [last_msg]
+    text = get_message_text(last_msg)
+
+    if last_msg.grouped_id:
+        recent_messages = await client.get_messages(entity, limit=20)
+        album_messages = [m for m in recent_messages if m.grouped_id == last_msg.grouped_id]
+        album_messages.sort(key=lambda m: m.id)
+
+        if album_messages:
+            post_messages = album_messages
+            for m in album_messages:
+                if m.raw_text:
+                    text = get_message_text(m)
+                    break
+
+    if should_skip_post(post_messages):
+        return None
+
+    return {
+        "key": get_post_key(last_msg),
+        "text": text,
+        "photo_paths": [],
+        "media_count": count_downloadable_images(post_messages),
+        "source_message_id": last_msg.id,
+    }
+
+
+async def build_post_data_from_messages(client, messages):
+    if not messages:
+        return None
+
+    post_messages = sorted(messages, key=lambda m: m.id)
+    last_msg = post_messages[-1]
+    text = ""
+
+    if should_skip_post(post_messages):
+        return None
+
+    for message in post_messages:
+        if message.raw_text:
+            text = get_message_text(message)
+            break
+
+    if not text:
+        text = get_message_text(last_msg)
+
+    return {
+        "key": get_post_key(last_msg),
+        "text": text,
+        "photo_paths": [],
+        "media_count": count_downloadable_images(post_messages),
+        "source_message_id": last_msg.id,
+    }
+
+
+async def get_new_posts_data(client, entity, last_post_key=None, limit=50):
+    messages = await client.get_messages(entity, limit=limit)
+
+    if not messages:
+        return []
+
+    grouped_messages = {}
+    ordered_keys = []
+
+    for message in messages:
+        post_key = get_post_key(message)
+        if post_key not in grouped_messages:
+            grouped_messages[post_key] = []
+            ordered_keys.append(post_key)
+        grouped_messages[post_key].append(message)
+
+    new_keys = []
+    for post_key in ordered_keys:
+        if last_post_key and post_key == last_post_key:
+            break
+        new_keys.append(post_key)
+
+    new_keys.reverse()
+
+    posts = []
+    for post_key in new_keys:
+        post_data = await build_post_data_from_messages(client, grouped_messages[post_key])
+        if post_data:
+            posts.append(post_data)
+
+    posts.sort(key=lambda post: post.get("source_message_id", 0))
+    return posts
+
+def response_ok(response):
+    try:
+        data = response.json()
+        return response.status_code == 200 and data.get("ok") is True
+    except Exception:
+        return response.status_code == 200
+
+def publish_post(post_data, use_ai=True):
+    text = post_data.get("processed_text")
+    if text is None:
+        text = process_text_with_ai(post_data["text"]) if use_ai else post_data["text"]
+    text = add_thematic_emojis(text)
+    photo_paths = post_data.get("photo_paths", [])
+    media_count = post_data.get("media_count", len(photo_paths))
+    is_album = media_count > 1
+    text = finalize_post_text(text, is_album=is_album)
+
+    if len(photo_paths) == 0:
+        response = send_text(text, with_buttons=True)
+        print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½ Ñ‚ÐµÐºÑÑ‚:", response.status_code)
+        print(response.text)
+        return response_ok(response)
+
+    elif len(photo_paths) == 1:
+        response = send_one_photo(photo_paths[0], text, with_buttons=True)
+        print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ð¾ 1 Ñ„Ð¾Ñ‚Ð¾:", response.status_code)
+        print(response.text)
+        return response_ok(response)
+
+    else:
+        response = send_media_group(photo_paths, text)
+        print(f"ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½ Ð°Ð»ÑŒÐ±Ð¾Ð¼ ({len(photo_paths)} Ñ„Ð¾Ñ‚Ð¾):", response.status_code)
+        print(response.text)
+
+        if not response_ok(response):
+            return False
+
+        buttons_response = send_text("ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", with_buttons=True)
+        print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ñ‹ ÐºÐ½Ð¾Ð¿ÐºÐ¸:", buttons_response.status_code)
+        print(buttons_response.text)
+
+        return response_ok(buttons_response)
+
+
+def send_post_to_review(post_data):
+    if not REVIEW_MODE:
+        return False
+
+    text = post_data.get("processed_text", post_data.get("text", ""))
+    photo_paths = post_data["photo_paths"]
+    moderation_markup = build_moderation_markup(post_data["key"])
+
+    if len(photo_paths) == 0:
+        response = send_text(
+            text,
+            chat_id=REVIEW_CHANNEL_ID,
+            reply_markup=moderation_markup,
+        )
+        print("Review text sent:", response.status_code)
+        print(response.text)
+        return response_ok(response)
+
+    if len(photo_paths) == 1:
+        response = send_one_photo(
+            photo_paths[0],
+            text,
+            chat_id=REVIEW_CHANNEL_ID,
+            reply_markup=moderation_markup,
+        )
+        print("Review photo sent:", response.status_code)
+        print(response.text)
+        return response_ok(response)
+
+    response = send_media_group(photo_paths, text, chat_id=REVIEW_CHANNEL_ID)
+    print("Review album sent:", response.status_code)
+    print(response.text)
+
+    if not response_ok(response):
+        return False
+
+    buttons_response = send_text(
+        f"Moderation for {post_data['key']}",
+        chat_id=REVIEW_CHANNEL_ID,
+        reply_markup=moderation_markup,
+    )
+    print("Review buttons sent:", buttons_response.status_code)
+    print(buttons_response.text)
+    return response_ok(buttons_response)
+
+
+def queue_post_for_review(post_data):
+    pending = load_pending()
+    prepared_post = dict(post_data)
+    prepared_post["processed_text"] = finalize_post_text(
+        process_text_with_ai(post_data["text"]),
+        is_album=post_data.get("media_count", 0) > 1,
+    )
+    prepared_post["status"] = "pending"
+
+    success = send_post_to_review(prepared_post)
+    cleanup_photo_paths(prepared_post.get("photo_paths"))
+    if not success:
+        return False
+
+    prepared_post["photo_paths"] = []
+    pending[prepared_post["key"]] = prepared_post
+    save_pending(pending)
+    return True
+
+
+def answer_callback(callback_query_id, text):
+    bot_api("answerCallbackQuery", {
+        "callback_query_id": callback_query_id,
+        "text": text,
+    })
+
+
+async def handle_moderation_updates(client, entity, state):
+    if not REVIEW_MODE:
+        return
+
+    payload = {
+        "timeout": 1,
+        "allowed_updates": ["callback_query"],
+    }
+
+    if state.get("bot_update_offset"):
+        payload["offset"] = state["bot_update_offset"]
+
+    response = bot_api("getUpdates", payload)
+    if not response_ok(response):
+        print("getUpdates error:", response.status_code, response.text)
+        return
+
+    updates = response.json().get("result", [])
+    if not updates:
+        return
+
+    pending = load_pending()
+
+    for update in updates:
+        state["bot_update_offset"] = update["update_id"] + 1
+        callback = update.get("callback_query")
+        if not callback:
+            continue
+
+        action_data = callback.get("data", "")
+        if ":" not in action_data:
+            continue
+
+        action, post_key = action_data.split(":", 1)
+        post_data = pending.get(post_key)
+
+        if not post_data:
+            answer_callback(callback["id"], "Post not found")
+            continue
+
+        if post_data.get("status") != "pending":
+            answer_callback(callback["id"], f"Already {post_data.get('status')}")
+            continue
+
+        if action == "approve":
+            prepared_post = await rebuild_post_media(client, entity, post_data)
+            success = publish_post(prepared_post, use_ai=False)
+            cleanup_photo_paths(prepared_post.get("photo_paths"))
+            if success:
+                post_data["status"] = "approved"
+                post_data["photo_paths"] = []
+                pending[post_key] = post_data
+                save_pending(pending)
+                answer_callback(callback["id"], "Approved and published")
+            else:
+                answer_callback(callback["id"], "Publish error")
+
+        elif action == "reject":
+            post_data["status"] = "rejected"
+            cleanup_photo_paths(post_data.get("photo_paths"))
+            post_data["photo_paths"] = []
+            pending[post_key] = post_data
+            save_pending(pending)
+            answer_callback(callback["id"], "Rejected")
+
+    save_state(state)
+
+
+
+async def main():
+    if not API_ID:
+        print("Error: TG_API_ID is missing")
+        return
+
+    if not API_HASH:
+        print("Error: TG_API_HASH is missing")
+        return
+
+    if not SOURCE_CHANNEL:
+        print("Error: SOURCE_CHANNEL is missing")
+        return
+
+    if not TARGET_CHANNEL:
+        print("Error: TARGET_CHANNEL is missing")
+        return
+
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN is missing")
+        return
+
+    if SESSION_STRING:
+        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+    else:
+        client = TelegramClient("data/session_name", int(API_ID), API_HASH)
+
+    await client.start()
+    cleanup_temp_media_dir()
+    print("Telethon connected")
+    print("Auto mode started")
+    print("Review mode:", "ON" if REVIEW_MODE else "OFF")
+    if REVIEW_MODE:
+        print("Review channel:", safe_console_text(REVIEW_CHANNEL_ID))
+
+    entity = await resolve_source_entity(client)
+    print("SOURCE_CHANNEL:", safe_console_text(SOURCE_CHANNEL))
+    print("Source found:", safe_console_text(getattr(entity, "title", "no title")))
+    state = load_state()
+
+    try:
+        first_post_key = await get_latest_post_key(client, entity)
+        current_source_signature = get_source_signature(entity)
+
+        if not first_post_key:
+            print("No messages in source channel")
+            await client.disconnect()
+            return
+
+        if state.get("source_signature") != current_source_signature:
+            state["source_signature"] = current_source_signature
+            state["last_post_key"] = first_post_key
+            save_state(state)
+            save_pending({})
+            print("Source changed: current last post saved, waiting for new posts")
+
+        if not state.get("last_post_key"):
+            state["last_post_key"] = first_post_key
+            state["source_signature"] = current_source_signature
+            save_state(state)
+            print("First start: current last post saved, waiting for new posts")
+
+        while True:
+            try:
+                await handle_moderation_updates(client, entity, state)
+                new_posts = await get_new_posts_data(client, entity, state.get("last_post_key"))
+                print("New posts found:", len(new_posts))
+                print("State key:", state.get("last_post_key"))
+
+                if not new_posts:
+                    print("No new posts")
+                    await asyncio.sleep(CHECK_INTERVAL)
+                    continue
+
+                for post_data in new_posts:
+                    print(f"Processing post: {post_data['key']}")
+                    if REVIEW_MODE:
+                        print("Route: review channel")
+                        prepared_post = await rebuild_post_media(client, entity, post_data)
+                        success = queue_post_for_review(prepared_post)
+                    else:
+                        print("Route: target channel")
+                        prepared_post = await rebuild_post_media(client, entity, post_data)
+                        success = publish_post(prepared_post)
+                        cleanup_photo_paths(prepared_post.get("photo_paths"))
+
+                    if success:
+                        state["last_post_key"] = post_data["key"]
+                        save_state(state)
+                        print("Post sent and state updated")
+                    else:
+                        print("Send error: state.json not updated")
+                        break
+
+            except Exception as e:
+                print("Loop error:", str(e))
+
+            await asyncio.sleep(CHECK_INTERVAL)
+
+    finally:
+        await client.disconnect()
+
+
+asyncio.run(main())
