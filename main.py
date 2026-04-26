@@ -82,6 +82,7 @@ TEXT_LINK_TOKENS = [
     ("[[APK3]]", "WinWin APK", WINWIN_APK_URL),
     ("[[APK4]]", "Linebet APK", LINEBET_APK_URL),
 ]
+TARGET_PARTNER_TOKEN_PATTERN = re.compile(r"\[\[PARTNER\d+\]\]")
 
 BUTTON_LINKS = [
     (BUTTON1_TEXT, BUTTON1_URL),
@@ -132,22 +133,22 @@ TARGET_COMPANIES = [
     {
         "name": normalize_company_name(BUTTON3_TEXT, "LUCKYPARI"),
         "url": BUTTON3_URL,
-        "emoji": "🍀",
+        "emoji": "💛",
     },
     {
         "name": normalize_company_name(BUTTON2_TEXT, "WINWIN"),
         "url": BUTTON2_URL,
-        "emoji": "🎯",
+        "emoji": "🚀",
     },
     {
         "name": normalize_company_name(BUTTON1_TEXT, "ULTRAPARI"),
         "url": BUTTON1_URL,
-        "emoji": "💸",
+        "emoji": "🔥",
     },
     {
         "name": normalize_company_name(BUTTON4_TEXT, "LINEBET"),
         "url": BUTTON4_URL,
-        "emoji": "🔥",
+        "emoji": "👑",
     },
 ]
 
@@ -203,15 +204,12 @@ def get_source_signature(entity):
 def build_partner_block():
     lines = []
 
-    for company in TARGET_COMPANIES:
-        name = (company.get("name") or "").strip()
-        url = (company.get("url") or "").strip()
-        emoji = (company.get("emoji") or "").strip()
-        if not name or not url:
+    for index, company in enumerate(TARGET_COMPANIES, start=1):
+        if not (company.get("name") or "").strip():
             continue
 
-        suffix = f" {emoji}" if emoji else ""
-        lines.append(f"تسجيل ({url}) {name}{suffix}")
+        token = f"[[PARTNER{index}]]"
+        lines.append(token)
 
     return "\n\n".join(lines).strip()
 
@@ -273,27 +271,21 @@ def has_target_partner_block(text):
     if not body.strip():
         return False
 
+    if TARGET_PARTNER_TOKEN_PATTERN.search(body):
+        return True
+
     for raw_line in body.splitlines():
         line = (raw_line or "").strip()
         if not line:
             continue
 
-        lowered = line.lower()
         has_target_url = any(
             (company.get("url") or "").strip()
             and (company.get("url") or "").strip() in line
             for company in TARGET_COMPANIES
         )
-        has_target_brand = any(
-            (company.get("name") or "").strip()
-            and (company.get("name") or "").strip().lower() in lowered
-            for company in TARGET_COMPANIES
-        )
 
         if has_target_url:
-            return True
-
-        if has_target_brand and line_has_registration_context(line):
             return True
 
     return False
@@ -422,6 +414,20 @@ def prepare_telegram_text(text, limit=None):
         safe_text = safe_text.replace(
             escape(token),
             f'<a href="{escape(url, quote=True)}">{escape(label)}</a>',
+        )
+
+    for index, company in enumerate(TARGET_COMPANIES, start=1):
+        token = f"[[PARTNER{index}]]"
+        name = (company.get("name") or "").strip()
+        url = (company.get("url") or "").strip()
+        emoji = (company.get("emoji") or "").strip()
+        if not name or not url:
+            continue
+
+        link_label = f"سجل {name}{emoji}" if emoji else f"سجل {name}"
+        safe_text = safe_text.replace(
+            escape(token),
+            f'<a href="{escape(url, quote=True)}">{escape(link_label)}</a>',
         )
 
     return safe_text
