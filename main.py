@@ -19,6 +19,15 @@ def parse_telegram_peer(value):
     return value
 
 
+def parse_telegram_peers(value):
+    peers = []
+    for item in re.split(r"[\s,]+", value or ""):
+        item = (item or "").strip()
+        if item:
+            peers.append(parse_telegram_peer(item))
+    return peers
+
+
 def normalize_telegram_channel_id(value):
     value = str(value).strip()
     if value.startswith("-100") and value[4:].isdigit():
@@ -32,6 +41,10 @@ API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
 TARGET_CHANNEL = (os.getenv("TARGET_CHANNEL") or "").strip()
+TARGET_CHANNELS = parse_telegram_peers(os.getenv("TARGET_CHANNELS", ""))
+if not TARGET_CHANNELS and TARGET_CHANNEL:
+    TARGET_CHANNELS = [parse_telegram_peer(TARGET_CHANNEL)]
+DEFAULT_TARGET_CHANNEL = TARGET_CHANNELS[0] if TARGET_CHANNELS else parse_telegram_peer(TARGET_CHANNEL)
 SOURCE_CHANNEL_ENTITY = parse_telegram_peer(SOURCE_CHANNEL)
 REVIEW_CHANNEL_ID = os.getenv("REVIEW_CHANNEL_ID", "").strip()
 if REVIEW_CHANNEL_ID.startswith("100"):
@@ -1246,8 +1259,8 @@ def response_ok(response):
     except Exception:
         return response.status_code == 200
 
-def publish_post(post_data, use_ai=True):
-    text = build_final_text(post_data, use_ai=use_ai)
+def publish_post_to_channel(post_data, chat_id):
+    text = post_data.get("processed_text", "")
     media_items = post_data.get("media_items")
     if media_items is None:
         media_items = [
@@ -1258,25 +1271,25 @@ def publish_post(post_data, use_ai=True):
     with_buttons = bool(post_data.get("with_buttons")) and not post_contains_inline_partners(text)
 
     if len(media_items) == 0:
-        response = send_text(text, with_buttons=with_buttons)
-        print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½ Ñ‚ÐµÐºÑÑ‚:", response.status_code)
+        response = send_text(text, with_buttons=with_buttons, chat_id=chat_id)
+        print(f"Text sent to {safe_console_text(chat_id)}:", response.status_code)
         print(response.text)
         return response_ok(response)
 
     elif len(media_items) == 1:
         media_item = media_items[0]
         if media_item.get("type") == "video":
-            response = send_one_video(media_item["path"], text, with_buttons=with_buttons)
-            print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ð¾ 1 Ð²Ð¸Ð´ÐµÐ¾:", response.status_code)
+            response = send_one_video(media_item["path"], text, with_buttons=with_buttons, chat_id=chat_id)
+            print(f"One video sent to {safe_console_text(chat_id)}:", response.status_code)
         else:
-            response = send_one_photo(media_item["path"], text, with_buttons=with_buttons)
-            print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ð¾ 1 Ñ„Ð¾Ñ‚Ð¾:", response.status_code)
+            response = send_one_photo(media_item["path"], text, with_buttons=with_buttons, chat_id=chat_id)
+            print(f"One photo sent to {safe_console_text(chat_id)}:", response.status_code)
         print(response.text)
         return response_ok(response)
 
     else:
-        response = send_media_group(media_items, text)
-        print(f"ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½ Ð°Ð»ÑŒÐ±Ð¾Ð¼ ({len(media_items)} media):", response.status_code)
+        response = send_media_group(media_items, text, chat_id=chat_id)
+        print(f"Album sent to {safe_console_text(chat_id)} ({len(media_items)} media):", response.status_code)
         print(response.text)
 
         if not response_ok(response):
@@ -1285,10 +1298,26 @@ def publish_post(post_data, use_ai=True):
         if not with_buttons:
             return True
 
-        buttons_response = send_text("ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", with_buttons=True)
-        print("ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ñ‹ ÐºÐ½Ð¾Ð¿ÐºÐ¸:", buttons_response.status_code)
+        buttons_response = send_text("ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", with_buttons=True, chat_id=chat_id)
+        print(f"Buttons sent to {safe_console_text(chat_id)}:", buttons_response.status_code)
         print(buttons_response.text)
         return response_ok(buttons_response)
+
+
+def publish_post(post_data, use_ai=True):
+    prepared_post = dict(post_data)
+    prepared_post["processed_text"] = build_final_text(prepared_post, use_ai=use_ai)
+
+    if not TARGET_CHANNELS:
+        print("Error: TARGET_CHANNEL or TARGET_CHANNELS is missing")
+        return False
+
+    for chat_id in TARGET_CHANNELS:
+        print("Publishing to target:", safe_console_text(chat_id))
+        if not publish_post_to_channel(prepared_post, chat_id):
+            return False
+
+    return True
 
 
 def send_post_to_review(post_data):
@@ -1465,8 +1494,8 @@ async def main():
         print("Error: SOURCE_CHANNEL is missing")
         return
 
-    if not TARGET_CHANNEL:
-        print("Error: TARGET_CHANNEL is missing")
+    if not TARGET_CHANNELS:
+        print("Error: TARGET_CHANNEL or TARGET_CHANNELS is missing")
         return
 
     if not BOT_TOKEN:
@@ -1485,6 +1514,7 @@ async def main():
     print("Review mode:", "ON" if REVIEW_MODE else "OFF")
     if REVIEW_MODE:
         print("Review channel:", safe_console_text(REVIEW_CHANNEL_ID))
+    print("Target channels:", ", ".join(safe_console_text(chat_id) for chat_id in TARGET_CHANNELS))
 
     entity = await resolve_source_entity(client)
     print("SOURCE_CHANNEL:", safe_console_text(SOURCE_CHANNEL))
@@ -1532,7 +1562,7 @@ async def main():
                         prepared_post = await rebuild_post_media(client, entity, post_data)
                         success = queue_post_for_review(prepared_post)
                     else:
-                        print("Route: target channel")
+                        print("Route: target channels")
                         prepared_post = await rebuild_post_media(client, entity, post_data)
                         success = publish_post(prepared_post)
                         cleanup_media_items(prepared_post.get("media_items") or [])
