@@ -119,6 +119,7 @@ REGISTRATION_LINE_KEYWORDS = (
     "register",
     "registration",
 )
+INLINE_CODE_PATTERN = re.compile(r"^[A-Z0-9]{5,8}$")
 
 
 def normalize_company_name(text, fallback):
@@ -299,8 +300,54 @@ def has_partner_mentions(text):
     return has_source_partner_block(text)
 
 
+def is_ignored_code_line(line):
+    body = (line or "").strip()
+    if not body:
+        return False
+
+    candidate = body.lstrip("•-–—").strip()
+    if not candidate:
+        return False
+
+    parts = candidate.split(maxsplit=1)
+    token = parts[0].strip("()[]{}")
+    if not INLINE_CODE_PATTERN.fullmatch(token):
+        return False
+
+    target_names = {
+        (company.get("name") or "").strip().upper()
+        for company in TARGET_COMPANIES
+        if (company.get("name") or "").strip()
+    }
+    if token in target_names:
+        return False
+
+    if len(parts) == 1:
+        return True
+
+    rest = parts[1].strip()
+    if not rest:
+        return True
+
+    if any(char.isalpha() for char in rest):
+        return False
+
+    return True
+
+
+def remove_ignored_code_lines(text):
+    cleaned_lines = []
+
+    for raw_line in (text or "").splitlines():
+        if is_ignored_code_line(raw_line):
+            continue
+        cleaned_lines.append(raw_line)
+
+    return "\n".join(cleaned_lines)
+
+
 def strip_source_markers(text):
-    body = text or ""
+    body = remove_ignored_code_lines(text or "")
     body = re.sub(r"\[[^\]]+\]", "", body)
     body = re.sub(r"(?<!\S)@[A-Za-z0-9_]{3,}", "", body)
     body = SOURCE_PROMOCODE_PATTERN.sub(get_promocode_value(), body)
