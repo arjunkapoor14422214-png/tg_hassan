@@ -51,11 +51,11 @@ services:
       - key: AI_MODEL
         value: "gpt-4.1-mini"
       - key: AI_STYLE_PROMPT
-        value: "Rewrite the source into polished Arabic Telegram copy for a betting channel. Make it sound native, confident, clean, and premium. Keep facts, odds, teams, and promo meaning accurate. Use short punchy lines, natural Arabic rhythm, and elegant wording. No hashtags, no markdown, no filler, and no fake claims."
+        value: "Rewrite the source into polished Arabic Telegram copy for a betting and sports Telegram channel. Make it sound native, confident, clean, premium, and easy to read on mobile. Keep facts, odds, teams, injuries, and promo meaning accurate. If the source is promo or betting content, make it punchy and persuasive. If the source is sports news, keep it fast, sharp, and factual. Use short rhythmic lines, elegant Arabic wording, and selective emojis. Never mention the source channel, source attribution, or foreign partner brands. No hashtags, no markdown, no filler, and no fake claims."
       - key: AI_TARGET_LANG
         value: "Arabic"
       - key: PROMOCODE_TEXT
-        value: "Promocode: NILE"
+        value: "PROMOCODE: NILE"
       - key: APK_URL
         value: "https://t.me/PLATINUM_APK"
       - key: LUCKYPARI_APK_URL
