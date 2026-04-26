@@ -37,6 +37,6 @@ Optional:
 
 Notes:
 
-- `AI_ENABLED` is `false` by default.
+- AI is enabled in config, but it requires a valid `AI_API_KEY`.
 - The source channel can be a username like `@channel_name` or an ID like `-100...`.
 - Runtime state is stored in the local `data/` folder. Without a persistent disk on Render, this state resets after redeploys or restarts.
