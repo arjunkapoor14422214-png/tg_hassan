@@ -45,13 +45,13 @@ services:
       - key: BUTTON4_URL
         value: "https://lb-aff.com/L?tag=d_5445297m_22611c_site&site=5445297&ad=22611&r=registration"
       - key: AI_ENABLED
-        value: "false"
+        value: "true"
       - key: AI_API_KEY
         sync: false
       - key: AI_MODEL
         value: "gpt-4.1-mini"
       - key: AI_STYLE_PROMPT
-        value: "Light Telegram rewrite for Telegram. Keep meaning, facts, links, and emojis."
+        value: "Rewrite the source into polished Arabic Telegram copy for a betting channel. Make it sound native, confident, clean, and premium. Keep facts, odds, teams, and promo meaning accurate. Use short punchy lines, natural Arabic rhythm, and elegant wording. No hashtags, no markdown, no filler, and no fake claims."
       - key: AI_TARGET_LANG
         value: "Arabic"
       - key: PROMOCODE_TEXT
