@@ -661,9 +661,29 @@ def finalize_post_text(text, is_album=False):
     return body
 
 
+def has_visible_emoji(line):
+    return bool(re.match(r"^[\W_]*[\U0001F300-\U0001FAFF]", line or ""))
+
+
 def choose_line_emoji(line):
     lowered = (line or "").lower()
 
+    if (
+        "ربح" in lowered
+        or "فوز" in lowered
+        or "won" in lowered
+        or "win" in lowered
+        or "winnings" in lowered
+        or "paid out" in lowered
+        or "profit" in lowered
+        or "$" in lowered
+        or " دولار" in lowered
+        or "دولار " in lowered
+        or "ريال" in lowered
+        or "ايداع" in lowered
+        or "إيداع" in lowered
+    ):
+        return "💸"
     if "apk" in lowered or "تحميل" in lowered or "تنزيل" in lowered or "تطبيق" in lowered or "اندرويد" in lowered or "أندرويد" in lowered:
         return "📲"
     if (
@@ -703,16 +723,63 @@ def choose_line_emoji(line):
     return ""
 
 
+def choose_opening_emojis(line):
+    lowered = (line or "").lower()
+
+    if (
+        "bonus" in lowered
+        or "promo" in lowered
+        or "promocode" in lowered
+        or "بونص" in lowered
+        or "برومو" in lowered
+        or "كود" in lowered
+    ):
+        return "🎁🔥"
+    if (
+        "ربح" in lowered
+        or "فوز" in lowered
+        or "won" in lowered
+        or "win" in lowered
+        or "winnings" in lowered
+        or "paid out" in lowered
+        or "profit" in lowered
+        or "$" in lowered
+        or " دولار" in lowered
+        or "دولار " in lowered
+    ):
+        return "💸🔥"
+    if "اود" in lowered or "أود" in lowered or "odds" in lowered or "single" in lowered:
+        return "🔥💎"
+    if "tennis" in lowered or "تنس" in lowered:
+        return "🎾🔥"
+    if "basket" in lowered or "سلة" in lowered or "كرة السلة" in lowered:
+        return "🏀🔥"
+    if "football" in lowered or "futbol" in lowered or "كرة القدم" in lowered or "مباراة" in lowered or re.search(r"\b(?:vs|v)\b", lowered):
+        return "⚽🔥"
+    if "عاجل" in lowered or "urgent" in lowered or "إصابة" in lowered or "اصابة" in lowered:
+        return "🚨🔥"
+
+    line_emoji = choose_line_emoji(line)
+    if line_emoji:
+        return f"{line_emoji}🔥" if line_emoji != "🔥" else "🔥🚀"
+    return ""
+
+
 def add_thematic_emojis(text):
     lines = [(line or "").strip() for line in (text or "").splitlines()]
     styled_lines = []
 
-    for line in lines:
+    for index, line in enumerate(lines):
         if not line:
             continue
-        if re.match(r"^[\W_]*[\U0001F300-\U0001FAFF]", line):
+        if has_visible_emoji(line):
             styled_lines.append(line)
             continue
+        if index == 0:
+            opening_emojis = choose_opening_emojis(line)
+            if opening_emojis:
+                styled_lines.append(f"{opening_emojis} {line}")
+                continue
         emoji = choose_line_emoji(line)
         if emoji:
             styled_lines.append(f"{emoji} {line}")
@@ -760,7 +827,10 @@ def process_text_with_ai(text):
         "Use natural Arabic that reads like a real channel post, not a literal translation. "
         "Make the text compact, stylish, and easy to scan in Telegram. "
         "Prefer 3 to 7 short lines with good rhythm. "
-        "Use clean unicode emojis selectively, not on every line. "
+        "Use clean unicode emojis with taste. "
+        "The opening line should usually include 1 or 2 strong contextual emojis. "
+        "Promo, winnings, odds, and key sports lines can use money, fire, rocket, gift, or sports emojis when they fit. "
+        "Do not overload every line. "
         "Keep target brand names only when they already appear in the source text you receive. "
         "Never mention the source channel, source attribution, or source betting brands. "
         "Do not add hashtags, markdown, bullet lists, explanations, or quotation marks around the answer. "
@@ -1221,6 +1291,25 @@ async def get_latest_post_key(client, entity):
     return get_post_key(messages[0])
 
 
+async def ensure_client_connected(client):
+    if client.is_connected():
+        return True
+
+    print("Telethon disconnected, trying to reconnect...")
+
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            print("Reconnect failed: session is not authorized")
+            return False
+
+        print("Telethon reconnected")
+        return True
+    except Exception as e:
+        print("Reconnect error:", str(e))
+        return False
+
+
 async def rebuild_post_media(client, entity, post_data):
     media_items = post_data.get("media_items")
     if media_items is None:
@@ -1678,6 +1767,10 @@ async def main():
 
         while True:
             try:
+                if not await ensure_client_connected(client):
+                    await asyncio.sleep(CHECK_INTERVAL)
+                    continue
+
                 await handle_moderation_updates(client, entity, state)
                 new_posts = await get_new_posts_data(client, entity, state.get("last_post_key"))
                 print("New posts found:", len(new_posts))
