@@ -71,6 +71,7 @@ AI_STYLE_PROMPT = os.getenv(
 AI_TARGET_LANG = os.getenv("AI_TARGET_LANG", "").strip()
 PROMOCODE_TEXT = os.getenv("PROMOCODE_TEXT", "PROMOCODE: NILE").strip() or "PROMOCODE: NILE"
 APK_URL = os.getenv("APK_URL", "https://t.me/PLATINUM_APK").strip() or "https://t.me/PLATINUM_APK"
+PRIMARY_PARTNER_ONLY_MODE = os.getenv("PRIMARY_PARTNER_ONLY_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 BUTTON1_TEXT = os.getenv("BUTTON1_TEXT")
 BUTTON1_URL = os.getenv("BUTTON1_URL")
@@ -97,12 +98,14 @@ TEXT_LINK_TOKENS = [
 ]
 TARGET_PARTNER_TOKEN_PATTERN = re.compile(r"\[\[PARTNER\d+\]\]")
 
-BUTTON_LINKS = [
+ALL_BUTTON_LINKS = [
     (BUTTON1_TEXT, BUTTON1_URL),
     (BUTTON2_TEXT, BUTTON2_URL),
     (BUTTON3_TEXT, BUTTON3_URL),
     (BUTTON4_TEXT, BUTTON4_URL),
 ]
+PRIMARY_BUTTON_LINKS = [(BUTTON3_TEXT, BUTTON3_URL)] if BUTTON3_TEXT and BUTTON3_URL else []
+BUTTON_LINKS = PRIMARY_BUTTON_LINKS if PRIMARY_PARTNER_ONLY_MODE else ALL_BUTTON_LINKS
 
 SOURCE_BRAND_PATTERN = re.compile(
     r"(?i)\b(mel\s*bet|1x\s*bet|pari\s*land|mega\s*pari|megapari|pariland)\b"
@@ -143,7 +146,7 @@ def normalize_company_name(text, fallback):
     return value or fallback
 
 
-TARGET_COMPANIES = [
+ALL_TARGET_COMPANIES = [
     {
         "name": normalize_company_name(BUTTON3_TEXT, "LUCKYPARI"),
         "url": BUTTON3_URL,
@@ -165,6 +168,7 @@ TARGET_COMPANIES = [
         "emoji": "👑",
     },
 ]
+TARGET_COMPANIES = ALL_TARGET_COMPANIES[:1] if PRIMARY_PARTNER_ONLY_MODE else ALL_TARGET_COMPANIES
 
 SOURCE_BRAND_RULES = [
     (re.compile(r"(?i)\bmel\s*bet\b"), 0),
@@ -226,7 +230,7 @@ def normalize_brand_key(value):
 
 
 def get_primary_target_company():
-    for company in TARGET_COMPANIES:
+    for company in ALL_TARGET_COMPANIES:
         if (company.get("name") or "").strip() and (company.get("url") or "").strip():
             return company
     return {"name": "LUCKYPARI", "url": BUTTON3_URL, "emoji": "💛"}
@@ -235,6 +239,11 @@ def get_primary_target_company():
 TARGET_COMPANY_KEYS = {
     normalize_brand_key(company.get("name"))
     for company in TARGET_COMPANIES
+    if normalize_brand_key(company.get("name"))
+}
+ALL_TARGET_COMPANY_KEYS = {
+    normalize_brand_key(company.get("name"))
+    for company in ALL_TARGET_COMPANIES
     if normalize_brand_key(company.get("name"))
 }
 KNOWN_SOURCE_BRAND_KEYS = {
@@ -278,13 +287,13 @@ def line_has_registration_context(line):
 def contains_target_company_reference(text):
     body = text or ""
     normalized_body = normalize_brand_key(body)
-    if any(key in normalized_body for key in TARGET_COMPANY_KEYS):
+    if any(key in normalized_body for key in ALL_TARGET_COMPANY_KEYS):
         return True
 
     return any(
         (company.get("url") or "").strip()
         and (company.get("url") or "").strip() in body
-        for company in TARGET_COMPANIES
+        for company in ALL_TARGET_COMPANIES
     )
 
 
@@ -295,6 +304,29 @@ def is_target_partner_line(line):
     if not line_has_registration_context(body):
         return False
     return contains_target_company_reference(body)
+
+
+def should_strip_partner_brand_line(line):
+    body = (line or "").strip()
+    if not body:
+        return False
+
+    if is_target_partner_line(body):
+        return True
+
+    if not PRIMARY_PARTNER_ONLY_MODE:
+        return False
+
+    if contains_target_company_reference(body):
+        return True
+
+    if source_mentions_brands(body):
+        return True
+
+    if line_has_foreign_bookmaker_mention(body, partner_fallback=True) and line_has_partner_context(body):
+        return True
+
+    return False
 
 
 def line_has_foreign_bookmaker_mention(line, partner_fallback=False):
@@ -312,7 +344,7 @@ def line_has_foreign_bookmaker_mention(line, partner_fallback=False):
         brand_key = normalize_brand_key(match.group(0))
         if not brand_key:
             continue
-        if brand_key in TARGET_COMPANY_KEYS or brand_key in KNOWN_SOURCE_BRAND_KEYS:
+        if brand_key in ALL_TARGET_COMPANY_KEYS or brand_key in KNOWN_SOURCE_BRAND_KEYS:
             continue
         return True
 
@@ -331,9 +363,21 @@ def replace_foreign_bookmaker_mentions(text):
 
 def replace_source_brand_mentions(text):
     body = replace_foreign_bookmaker_mentions(text)
+    primary_name = (get_primary_target_company().get("name") or "").strip() or "LUCKYPARI"
     for pattern, target_index in SOURCE_BRAND_RULES:
-        replacement = (TARGET_COMPANIES[target_index].get("name") or "").strip() or "منصاتنا"
+        if PRIMARY_PARTNER_ONLY_MODE:
+            replacement = primary_name
+        else:
+            replacement = (ALL_TARGET_COMPANIES[target_index].get("name") or "").strip() or primary_name
         body = pattern.sub(replacement, body)
+
+    if PRIMARY_PARTNER_ONLY_MODE:
+        for company in ALL_TARGET_COMPANIES[1:]:
+            name = (company.get("name") or "").strip()
+            if not name:
+                continue
+            body = re.sub(rf"(?i)\b{re.escape(name)}\b", primary_name, body)
+
     return body
 
 
@@ -395,7 +439,11 @@ def has_target_partner_block(text):
 
 
 def has_company_mentions(text):
-    return source_mentions_brands(text) or line_has_foreign_bookmaker_mention(text)
+    return (
+        source_mentions_brands(text)
+        or line_has_foreign_bookmaker_mention(text)
+        or contains_target_company_reference(text)
+    )
 
 
 def has_partner_mentions(text):
@@ -403,6 +451,9 @@ def has_partner_mentions(text):
 
 
 def should_use_primary_partner_fallback(text):
+    if PRIMARY_PARTNER_ONLY_MODE:
+        return True
+
     body = text or ""
     if not body.strip():
         return False
@@ -493,7 +544,7 @@ def prepare_text_for_ai(text, inline_partners=False):
             cleaned_lines.append("")
             continue
 
-        if is_target_partner_line(line):
+        if should_strip_partner_brand_line(line):
             continue
 
         if SOURCE_LINK_PATTERN.search(line):
@@ -527,7 +578,7 @@ def remove_source_brand_residue(text):
     cleaned_lines = []
     for raw_line in body.splitlines():
         line = (raw_line or "").strip()
-        if is_target_partner_line(line):
+        if should_strip_partner_brand_line(line):
             continue
         cleaned_lines.append(raw_line)
 
@@ -844,7 +895,6 @@ def process_text_with_ai(text):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.4,
     }
 
     headers = {
@@ -1089,6 +1139,14 @@ def utf16_offset_to_index(text, offset):
     return len(text)
 
 
+def contains_flag_emoji(text):
+    for char in text or "":
+        codepoint = ord(char)
+        if 0x1F1E6 <= codepoint <= 0x1F1FF:
+            return True
+    return False
+
+
 def choose_custom_emoji_replacement(text, index):
     line_start = text.rfind("\n", 0, index) + 1
     line_end = text.find("\n", index)
@@ -1134,7 +1192,11 @@ def replace_custom_emojis(text, entities):
 
         start = utf16_offset_to_index(text, entity.offset)
         end = utf16_offset_to_index(text, entity.offset + entity.length)
-        replacement = choose_custom_emoji_replacement(text, start)
+        original_fragment = text[start:end]
+        if contains_flag_emoji(original_fragment):
+            replacement = original_fragment
+        else:
+            replacement = choose_custom_emoji_replacement(text, start) or original_fragment
         replacements.append((start, end, replacement))
 
     if not replacements:
@@ -1390,6 +1452,8 @@ async def get_post_data(client, entity):
 
     inline_partners = has_partner_mentions(text)
     has_companies = has_company_mentions(text)
+    if PRIMARY_PARTNER_ONLY_MODE and has_companies:
+        inline_partners = True
     primary_partner_only = should_use_primary_partner_fallback(text)
 
     return {
@@ -1426,6 +1490,8 @@ async def build_post_data_from_messages(client, messages):
 
     inline_partners = has_partner_mentions(text)
     has_companies = has_company_mentions(text)
+    if PRIMARY_PARTNER_ONLY_MODE and has_companies:
+        inline_partners = True
     primary_partner_only = should_use_primary_partner_fallback(text)
 
     return {
