@@ -16,6 +16,8 @@ services:
         sync: false
       - key: TARGET_CHANNEL
         sync: false
+      - key: TARGET_CHANNELS
+        sync: false
       - key: REVIEW_CHANNEL_ID
         value: ""
       - key: SOURCE_CHANNEL
@@ -56,6 +58,14 @@ services:
         value: "Arabic"
       - key: PROMOCODE_TEXT
         value: "PROMOCODE: NILE"
+      - key: TARGET_PROMOCODE_1003931996970
+        value: "PROMOCODE: KARIMBET"
+      - key: TARGET_BUTTON3_URL_1003931996970
+        value: "https://lckypr.com/B3rDdYb"
+      - key: TARGET_PROMOCODE_1003243126359
+        value: "PROMOCODE: HASSANKING"
+      - key: TARGET_BUTTON3_URL_1003243126359
+        value: "https://lckypr.com/Ar0fxvk"
       - key: APK_URL
         value: "https://t.me/PLATINUM_APK"
       - key: LUCKYPARI_APK_URL

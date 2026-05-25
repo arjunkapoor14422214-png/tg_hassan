@@ -1,10 +1,11 @@
-from dotenv import load_dotenv
+﻿from dotenv import load_dotenv
 import os
 import asyncio
 import json
 import random
 import re
 import sys
+import time
 import requests
 from html import escape
 from telethon import TelegramClient
@@ -204,6 +205,10 @@ LATIN_TITLES = [
 STATE_FILE = "data/state.json"
 PENDING_FILE = "data/pending.json"
 CHECK_INTERVAL = 10
+NEW_POST_SCAN_LIMIT = 200
+TELEGRAM_REQUEST_RETRIES = 3
+MEDIA_DOWNLOAD_RETRIES = 3
+RETRY_DELAY_SECONDS = 2
 
 
 def safe_console_text(value):
@@ -212,11 +217,69 @@ def safe_console_text(value):
     return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
-def get_promocode_value():
-    tokens = re.findall(r"[A-Za-z0-9_-]{3,}", PROMOCODE_TEXT or "")
+def get_target_channel_env_suffix(chat_id):
+    suffix = re.sub(r"\D+", "", str(chat_id or ""))
+    return suffix or None
+
+
+def get_target_channel_override(chat_id=None):
+    suffix = get_target_channel_env_suffix(chat_id)
+    if not suffix:
+        return {}
+
+    override = {}
+    promocode_text = os.getenv(f"TARGET_PROMOCODE_{suffix}", "").strip()
+    button3_text = os.getenv(f"TARGET_BUTTON3_TEXT_{suffix}", "").strip()
+    button3_url = os.getenv(f"TARGET_BUTTON3_URL_{suffix}", "").strip()
+
+    if promocode_text:
+        override["promocode_text"] = promocode_text
+    if button3_text:
+        override["button3_text"] = button3_text
+    if button3_url:
+        override["button3_url"] = button3_url
+
+    return override
+
+
+def get_target_promocode_text(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    return override.get("promocode_text") or PROMOCODE_TEXT
+
+
+def get_target_companies(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    companies = [dict(company) for company in ALL_TARGET_COMPANIES]
+
+    if companies:
+        if override.get("button3_text"):
+            companies[0]["name"] = normalize_company_name(override["button3_text"], companies[0].get("name") or "LUCKYPARI")
+        if override.get("button3_url"):
+            companies[0]["url"] = override["button3_url"]
+
+    return companies[:1] if PRIMARY_PARTNER_ONLY_MODE else companies
+
+
+def get_button_links(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    all_button_links = [
+        (BUTTON1_TEXT, BUTTON1_URL),
+        (BUTTON2_TEXT, BUTTON2_URL),
+        (
+            override.get("button3_text") or BUTTON3_TEXT,
+            override.get("button3_url") or BUTTON3_URL,
+        ),
+        (BUTTON4_TEXT, BUTTON4_URL),
+    ]
+    primary_button_links = [all_button_links[2]] if all_button_links[2][0] and all_button_links[2][1] else []
+    return primary_button_links if PRIMARY_PARTNER_ONLY_MODE else all_button_links
+
+
+def get_promocode_value(chat_id=None):
+    tokens = re.findall(r"[A-Za-z0-9_-]{3,}", get_target_promocode_text(chat_id) or "")
     if tokens:
         return tokens[-1]
-    return (PROMOCODE_TEXT or "").strip()
+    return (get_target_promocode_text(chat_id) or "").strip()
 
 
 def get_source_signature(entity):
@@ -229,11 +292,11 @@ def normalize_brand_key(value):
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
-def get_primary_target_company():
-    for company in ALL_TARGET_COMPANIES:
+def get_primary_target_company(chat_id=None):
+    for company in get_target_companies(chat_id):
         if (company.get("name") or "").strip() and (company.get("url") or "").strip():
             return company
-    return {"name": "LUCKYPARI", "url": BUTTON3_URL, "emoji": "💛"}
+    return {"name": "LUCKYPARI", "url": get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL, "emoji": "💛"}
 
 
 TARGET_COMPANY_KEYS = {
@@ -254,10 +317,10 @@ KNOWN_SOURCE_BRAND_KEYS = {
 }
 
 
-def build_partner_block():
+def build_partner_block(chat_id=None):
     lines = []
 
-    for index, company in enumerate(TARGET_COMPANIES, start=1):
+    for index, company in enumerate(get_target_companies(chat_id), start=1):
         if not (company.get("name") or "").strip():
             continue
 
@@ -267,8 +330,8 @@ def build_partner_block():
     return "\n\n".join(lines).strip()
 
 
-def build_primary_partner_block():
-    primary_company = get_primary_target_company()
+def build_primary_partner_block(chat_id=None):
+    primary_company = get_primary_target_company(chat_id)
     if not (primary_company.get("name") or "").strip():
         return ""
     return "[[PARTNER1]]"
@@ -284,40 +347,47 @@ def line_has_registration_context(line):
     return any(keyword in lowered for keyword in REGISTRATION_LINE_KEYWORDS)
 
 
-def contains_target_company_reference(text):
+def contains_target_company_reference(text, chat_id=None):
     body = text or ""
+    target_companies = get_target_companies(chat_id)
+    target_company_keys = {
+        normalize_brand_key(company.get("name"))
+        for company in target_companies
+        if normalize_brand_key(company.get("name"))
+    }
+
     normalized_body = normalize_brand_key(body)
-    if any(key in normalized_body for key in ALL_TARGET_COMPANY_KEYS):
+    if any(key in normalized_body for key in target_company_keys):
         return True
 
     return any(
         (company.get("url") or "").strip()
         and (company.get("url") or "").strip() in body
-        for company in ALL_TARGET_COMPANIES
+        for company in target_companies
     )
 
 
-def is_target_partner_line(line):
+def is_target_partner_line(line, chat_id=None):
     body = (line or "").strip()
     if not body:
         return False
     if not line_has_registration_context(body):
         return False
-    return contains_target_company_reference(body)
+    return contains_target_company_reference(body, chat_id=chat_id)
 
 
-def should_strip_partner_brand_line(line):
+def should_strip_partner_brand_line(line, chat_id=None):
     body = (line or "").strip()
     if not body:
         return False
 
-    if is_target_partner_line(body):
+    if is_target_partner_line(body, chat_id=chat_id):
         return True
 
     if not PRIMARY_PARTNER_ONLY_MODE:
         return False
 
-    if contains_target_company_reference(body):
+    if contains_target_company_reference(body, chat_id=chat_id):
         return True
 
     if source_mentions_brands(body):
@@ -356,23 +426,24 @@ def source_mentions_brands(text):
     return any(pattern.search(body) for pattern, _ in SOURCE_BRAND_RULES)
 
 
-def replace_foreign_bookmaker_mentions(text):
-    primary_name = (get_primary_target_company().get("name") or "").strip() or "LUCKYPARI"
+def replace_foreign_bookmaker_mentions(text, chat_id=None):
+    primary_name = (get_primary_target_company(chat_id).get("name") or "").strip() or "LUCKYPARI"
     return COMMON_FOREIGN_BOOKMAKER_PATTERN.sub(primary_name, text or "")
 
 
-def replace_source_brand_mentions(text):
-    body = replace_foreign_bookmaker_mentions(text)
-    primary_name = (get_primary_target_company().get("name") or "").strip() or "LUCKYPARI"
+def replace_source_brand_mentions(text, chat_id=None):
+    body = replace_foreign_bookmaker_mentions(text, chat_id=chat_id)
+    primary_name = (get_primary_target_company(chat_id).get("name") or "").strip() or "LUCKYPARI"
+    target_companies = get_target_companies(chat_id)
     for pattern, target_index in SOURCE_BRAND_RULES:
         if PRIMARY_PARTNER_ONLY_MODE:
             replacement = primary_name
         else:
-            replacement = (ALL_TARGET_COMPANIES[target_index].get("name") or "").strip() or primary_name
+            replacement = (target_companies[target_index].get("name") or "").strip() or primary_name
         body = pattern.sub(replacement, body)
 
     if PRIMARY_PARTNER_ONLY_MODE:
-        for company in ALL_TARGET_COMPANIES[1:]:
+        for company in target_companies[1:]:
             name = (company.get("name") or "").strip()
             if not name:
                 continue
@@ -413,7 +484,7 @@ def has_source_partner_block(text):
     return False
 
 
-def has_target_partner_block(text):
+def has_target_partner_block(text, chat_id=None):
     body = text or ""
     if not body.strip():
         return False
@@ -429,7 +500,7 @@ def has_target_partner_block(text):
         has_target_url = any(
             (company.get("url") or "").strip()
             and (company.get("url") or "").strip() in line
-            for company in TARGET_COMPANIES
+            for company in get_target_companies(chat_id)
         )
 
         if has_target_url:
@@ -438,11 +509,11 @@ def has_target_partner_block(text):
     return False
 
 
-def has_company_mentions(text):
+def has_company_mentions(text, chat_id=None):
     return (
         source_mentions_brands(text)
         or line_has_foreign_bookmaker_mention(text)
-        or contains_target_company_reference(text)
+        or contains_target_company_reference(text, chat_id=chat_id)
     )
 
 
@@ -480,7 +551,7 @@ def should_use_primary_partner_fallback(text):
     return False
 
 
-def is_ignored_code_line(line):
+def is_ignored_code_line(line, chat_id=None):
     body = (line or "").strip()
     if not body:
         return False
@@ -496,7 +567,7 @@ def is_ignored_code_line(line):
 
     target_names = {
         (company.get("name") or "").strip().upper()
-        for company in TARGET_COMPANIES
+        for company in get_target_companies(chat_id)
         if (company.get("name") or "").strip()
     }
     if token in target_names:
@@ -515,27 +586,27 @@ def is_ignored_code_line(line):
     return True
 
 
-def remove_ignored_code_lines(text):
+def remove_ignored_code_lines(text, chat_id=None):
     cleaned_lines = []
 
     for raw_line in (text or "").splitlines():
-        if is_ignored_code_line(raw_line):
+        if is_ignored_code_line(raw_line, chat_id=chat_id):
             continue
         cleaned_lines.append(raw_line)
 
     return "\n".join(cleaned_lines)
 
 
-def strip_source_markers(text):
-    body = remove_ignored_code_lines(text or "")
+def strip_source_markers(text, chat_id=None):
+    body = remove_ignored_code_lines(text or "", chat_id=chat_id)
     body = re.sub(r"\[[^\]]+\]", "", body)
     body = re.sub(r"(?<!\S)@[A-Za-z0-9_]{3,}", "", body)
-    body = SOURCE_PROMOCODE_PATTERN.sub(get_promocode_value(), body)
+    body = SOURCE_PROMOCODE_PATTERN.sub(get_promocode_value(chat_id), body)
     return body
 
 
-def prepare_text_for_ai(text, inline_partners=False):
-    body = replace_source_brand_mentions(strip_source_markers(text))
+def prepare_text_for_ai(text, inline_partners=False, chat_id=None):
+    body = replace_source_brand_mentions(strip_source_markers(text, chat_id=chat_id), chat_id=chat_id)
     cleaned_lines = []
 
     for raw_line in body.splitlines():
@@ -544,7 +615,7 @@ def prepare_text_for_ai(text, inline_partners=False):
             cleaned_lines.append("")
             continue
 
-        if should_strip_partner_brand_line(line):
+        if should_strip_partner_brand_line(line, chat_id=chat_id):
             continue
 
         if SOURCE_LINK_PATTERN.search(line):
@@ -564,21 +635,21 @@ def prepare_text_for_ai(text, inline_partners=False):
     if prepared:
         return prepared
 
-    if inline_partners or has_company_mentions(text):
+    if inline_partners or has_company_mentions(text, chat_id=chat_id):
         return "اكتب منشوراً عربياً قصيراً وأنيقاً عن العرض مع الحفاظ على نبرة ترويجية واضحة."
 
     return (text or "").strip()
 
 
-def remove_source_brand_residue(text):
-    body = strip_source_markers(text)
+def remove_source_brand_residue(text, chat_id=None):
+    body = strip_source_markers(text, chat_id=chat_id)
     body = SOURCE_LINK_PATTERN.sub("", body)
-    body = replace_source_brand_mentions(body)
+    body = replace_source_brand_mentions(body, chat_id=chat_id)
 
     cleaned_lines = []
     for raw_line in body.splitlines():
         line = (raw_line or "").strip()
-        if should_strip_partner_brand_line(line):
+        if should_strip_partner_brand_line(line, chat_id=chat_id):
             continue
         cleaned_lines.append(raw_line)
 
@@ -587,8 +658,8 @@ def remove_source_brand_residue(text):
     return body.strip()
 
 
-def post_contains_inline_partners(text):
-    return has_target_partner_block(text)
+def post_contains_inline_partners(text, chat_id=None):
+    return has_target_partner_block(text, chat_id=chat_id)
 
 
 async def resolve_source_entity(client):
@@ -605,10 +676,10 @@ async def resolve_source_entity(client):
     return await client.get_entity(SOURCE_CHANNEL_ENTITY)
 
 
-def build_reply_markup():
+def build_reply_markup(chat_id=None):
     rows = []
 
-    for text, url in BUTTON_LINKS:
+    for text, url in get_button_links(chat_id):
         if text and url:
             rows.append([{"text": text, "url": url}])
 
@@ -629,18 +700,19 @@ def build_moderation_markup(post_key):
     }
 
 
-def apply_promocode_rule(text):
+def apply_promocode_rule(text, chat_id=None):
     text = (text or "").strip()
+    promocode_text = get_target_promocode_text(chat_id)
     if not text:
-        return PROMOCODE_TEXT
+        return promocode_text
 
     if PROMOCODE_ONLY_PATTERN.search(text):
-        return PROMOCODE_ONLY_PATTERN.sub(PROMOCODE_TEXT, text).strip()
+        return PROMOCODE_ONLY_PATTERN.sub(promocode_text, text).strip()
 
-    return f"{text}\n\n{PROMOCODE_TEXT}"
+    return f"{text}\n\n{promocode_text}"
 
 
-def prepare_telegram_text(text, limit=None):
+def prepare_telegram_text(text, limit=None, chat_id=None):
     text = text if text else "[Ð±ÐµÐ· Ñ‚ÐµÐºÑÑ‚Ð°]"
     if limit:
         text = text[:limit]
@@ -655,7 +727,7 @@ def prepare_telegram_text(text, limit=None):
             f'<a href="{escape(url, quote=True)}">{escape(label)}</a>',
         )
 
-    for index, company in enumerate(TARGET_COMPANIES, start=1):
+    for index, company in enumerate(get_target_companies(chat_id), start=1):
         token = f"[[PARTNER{index}]]"
         name = (company.get("name") or "").strip()
         url = (company.get("url") or "").strip()
@@ -705,10 +777,10 @@ def add_album_footer(text):
     return f"{body}\n\n{ALBUM_CHANNEL_URL}".strip()
 
 
-def finalize_post_text(text, is_album=False):
+def finalize_post_text(text, is_album=False, chat_id=None):
     body = (text or "").strip()
 
-    body = apply_promocode_rule(body)
+    body = apply_promocode_rule(body, chat_id=chat_id)
     return body
 
 
@@ -903,8 +975,9 @@ def process_text_with_ai(text):
     }
 
     try:
-        response = requests.post(
+        response = perform_post_request(
             "https://api.openai.com/v1/chat/completions",
+            request_name="OpenAI chat completion",
             headers=headers,
             json=payload,
             timeout=90,
@@ -935,26 +1008,56 @@ def process_text_with_ai(text):
         return text
 
 
-def build_final_text(post_data, use_ai=True):
+def build_final_text(post_data, use_ai=True, chat_id=None):
     source_text = post_data.get("text", "")
     inline_partners = bool(post_data.get("inline_partners"))
     primary_partner_only = bool(post_data.get("primary_partner_only"))
-    ai_input = prepare_text_for_ai(source_text, inline_partners=inline_partners)
+    ai_input = prepare_text_for_ai(source_text, inline_partners=inline_partners, chat_id=chat_id)
 
     text = post_data.get("processed_text")
     if text is None:
         text = process_text_with_ai(ai_input) if use_ai else ai_input
 
-    text = remove_source_brand_residue(text)
+    text = remove_source_brand_residue(text, chat_id=chat_id)
     text = add_thematic_emojis(text)
 
-    if inline_partners and not has_target_partner_block(text):
-        partner_block = build_primary_partner_block() if primary_partner_only else build_partner_block()
+    if inline_partners and not has_target_partner_block(text, chat_id=chat_id):
+        partner_block = build_primary_partner_block(chat_id=chat_id) if primary_partner_only else build_partner_block(chat_id=chat_id)
         if partner_block:
             text = f"{text}\n\n{partner_block}".strip()
 
     media_count = post_data.get("media_count", len(post_data.get("media_items", [])))
-    return finalize_post_text(text, is_album=media_count > 1)
+    return finalize_post_text(text, is_album=media_count > 1, chat_id=chat_id)
+
+
+def perform_post_request(url, request_name="request", timeout=60, **kwargs):
+    last_response = None
+
+    for attempt in range(1, TELEGRAM_REQUEST_RETRIES + 1):
+        try:
+            response = requests.post(url, timeout=timeout, **kwargs)
+        except requests.RequestException as e:
+            print(f"{request_name} network error ({attempt}/{TELEGRAM_REQUEST_RETRIES}):", str(e))
+            if attempt < TELEGRAM_REQUEST_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+            else:
+                raise
+            continue
+
+        last_response = response
+        if response.status_code in {429, 500, 502, 503, 504}:
+            print(
+                f"{request_name} temporary error ({attempt}/{TELEGRAM_REQUEST_RETRIES}):",
+                response.status_code,
+                safe_console_text(response.text),
+            )
+            if attempt < TELEGRAM_REQUEST_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+                continue
+
+        return response
+
+    return last_response
 
 
 
@@ -967,7 +1070,7 @@ def send_text(text, with_buttons=False, chat_id=None, reply_markup=None):
 
     payload = {
         "chat_id": chat_id or TARGET_CHANNEL,
-        "text": prepare_telegram_text(normalized_text),
+        "text": prepare_telegram_text(normalized_text, chat_id=chat_id),
         "disable_web_page_preview": True,
         "parse_mode": "HTML",
     }
@@ -975,11 +1078,11 @@ def send_text(text, with_buttons=False, chat_id=None, reply_markup=None):
     if reply_markup:
         payload["reply_markup"] = reply_markup
     elif with_buttons:
-        button_markup = build_reply_markup()
+        button_markup = build_reply_markup(chat_id=chat_id)
         if button_markup:
             payload["reply_markup"] = button_markup
 
-    return requests.post(url, json=payload, timeout=60)
+    return perform_post_request(url, request_name="sendMessage", json=payload, timeout=60)
 
 
 
@@ -988,20 +1091,26 @@ def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_
 
     data = {
         "chat_id": chat_id or TARGET_CHANNEL,
-        "caption": prepare_telegram_text(caption, limit=1024),
+        "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id),
         "parse_mode": "HTML",
     }
 
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
     elif with_buttons:
-        button_markup = build_reply_markup()
+        button_markup = build_reply_markup(chat_id=chat_id)
         if button_markup:
             data["reply_markup"] = json.dumps(button_markup, ensure_ascii=False)
 
     with open(photo_path, "rb") as photo_file:
         files = {"photo": photo_file}
-        return requests.post(url, data=data, files=files, timeout=120)
+        return perform_post_request(
+            url,
+            request_name="sendPhoto",
+            data=data,
+            files=files,
+            timeout=120,
+        )
 
 
 def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_markup=None):
@@ -1009,7 +1118,7 @@ def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_
 
     data = {
         "chat_id": chat_id or TARGET_CHANNEL,
-        "caption": prepare_telegram_text(caption, limit=1024),
+        "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id),
         "parse_mode": "HTML",
         "supports_streaming": True,
     }
@@ -1017,13 +1126,19 @@ def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
     elif with_buttons:
-        button_markup = build_reply_markup()
+        button_markup = build_reply_markup(chat_id=chat_id)
         if button_markup:
             data["reply_markup"] = json.dumps(button_markup, ensure_ascii=False)
 
     with open(video_path, "rb") as video_file:
         files = {"video": video_file}
-        return requests.post(url, data=data, files=files, timeout=180)
+        return perform_post_request(
+            url,
+            request_name="sendVideo",
+            data=data,
+            files=files,
+            timeout=180,
+        )
 
 
 def send_media_group(media_items, caption, chat_id=None):
@@ -1045,7 +1160,7 @@ def send_media_group(media_items, caption, chat_id=None):
             }
 
             if i == 0 and caption:
-                item["caption"] = prepare_telegram_text(caption, limit=1024)
+                item["caption"] = prepare_telegram_text(caption, limit=1024, chat_id=chat_id)
                 item["parse_mode"] = "HTML"
             if media_type == "video":
                 item["supports_streaming"] = True
@@ -1057,7 +1172,13 @@ def send_media_group(media_items, caption, chat_id=None):
             "media": json.dumps(media, ensure_ascii=False),
         }
 
-        return requests.post(url, data=data, files=opened_files, timeout=180)
+        return perform_post_request(
+            url,
+            request_name="sendMediaGroup",
+            data=data,
+            files=opened_files,
+            timeout=180,
+        )
 
     finally:
         for f in opened_files.values():
@@ -1094,6 +1215,40 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
+def get_post_progress(state):
+    progress = state.get("post_progress")
+    if isinstance(progress, dict):
+        return progress
+
+    progress = {}
+    state["post_progress"] = progress
+    return progress
+
+
+def get_sent_targets_for_post(state, post_key):
+    progress = get_post_progress(state)
+    return {
+        str(chat_id)
+        for chat_id in progress.get(str(post_key), [])
+        if str(chat_id).strip()
+    }
+
+
+def mark_target_sent(state, post_key, chat_id):
+    progress = get_post_progress(state)
+    key = str(post_key)
+    sent_targets = get_sent_targets_for_post(state, post_key)
+    sent_targets.add(str(chat_id))
+    progress[key] = sorted(sent_targets)
+
+
+def clear_post_progress(state, post_key):
+    progress = get_post_progress(state)
+    progress.pop(str(post_key), None)
+    if not progress:
+        state.pop("post_progress", None)
+
+
 def load_pending():
     if not os.path.exists(PENDING_FILE):
         return {}
@@ -1113,7 +1268,12 @@ def save_pending(pending):
 
 def bot_api(method, payload):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-    return requests.post(url, json=payload, timeout=60)
+    return perform_post_request(
+        url,
+        request_name=f"Telegram {method}",
+        json=payload,
+        timeout=60,
+    )
 
 
 
@@ -1372,7 +1532,31 @@ async def ensure_client_connected(client):
         return False
 
 
+async def download_media_with_retries(client, message, file="data/"):
+    for attempt in range(1, MEDIA_DOWNLOAD_RETRIES + 1):
+        try:
+            media_path = await client.download_media(message, file=file)
+            if media_path and os.path.exists(media_path):
+                return media_path
+
+            print(
+                f"Media download returned empty ({attempt}/{MEDIA_DOWNLOAD_RETRIES}) for message:",
+                safe_console_text(getattr(message, "id", "unknown")),
+            )
+        except Exception as e:
+            print(
+                f"Media download error ({attempt}/{MEDIA_DOWNLOAD_RETRIES}) for message {safe_console_text(getattr(message, 'id', 'unknown'))}:",
+                str(e),
+            )
+
+        if attempt < MEDIA_DOWNLOAD_RETRIES:
+            await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
+
+    return None
+
+
 async def rebuild_post_media(client, entity, post_data):
+    expected_media_count = int(post_data.get("media_count") or 0)
     media_items = post_data.get("media_items")
     if media_items is None:
         media_items = [
@@ -1380,16 +1564,23 @@ async def rebuild_post_media(client, entity, post_data):
             for path in (post_data.get("photo_paths") or [])
         ]
 
-    if media_items and all(os.path.exists(item.get("path", "")) for item in media_items):
+    if expected_media_count <= 0:
+        return post_data
+
+    if (
+        media_items
+        and len(media_items) >= expected_media_count
+        and all(os.path.exists(item.get("path", "")) for item in media_items)
+    ):
         return post_data
 
     message_id = post_data.get("source_message_id")
     if not message_id:
-        return post_data
+        raise RuntimeError(f"Cannot rebuild media for {post_data.get('key')}: missing source_message_id")
 
     source_message = await client.get_messages(entity, ids=message_id)
     if not source_message:
-        return post_data
+        raise RuntimeError(f"Cannot rebuild media for {post_data.get('key')}: source message not found")
 
     post_messages = [source_message]
     if source_message.grouped_id:
@@ -1410,9 +1601,15 @@ async def rebuild_post_media(client, entity, post_data):
         if not media_type:
             continue
 
-        media_path = await client.download_media(message, file="data/")
+        media_path = await download_media_with_retries(client, message, file="data/")
         if media_path:
             rebuilt_media_items.append({"type": media_type, "path": media_path})
+
+    if len(rebuilt_media_items) < expected_media_count:
+        cleanup_media_items(rebuilt_media_items)
+        raise RuntimeError(
+            f"Media rebuild incomplete for {post_data.get('key')}: expected {expected_media_count}, got {len(rebuilt_media_items)}"
+        )
 
     rebuilt_post = dict(post_data)
     rebuilt_post["media_items"] = rebuilt_media_items
@@ -1549,6 +1746,7 @@ def response_ok(response):
 
 def publish_post_to_channel(post_data, chat_id):
     text = post_data.get("processed_text", "")
+    expected_media_count = int(post_data.get("media_count") or 0)
     media_items = post_data.get("media_items")
     if media_items is None:
         media_items = [
@@ -1556,7 +1754,22 @@ def publish_post_to_channel(post_data, chat_id):
             for path in (post_data.get("photo_paths") or [])
         ]
 
-    with_buttons = bool(post_data.get("with_buttons")) and not post_contains_inline_partners(text)
+    with_buttons = bool(post_data.get("with_buttons")) and not post_contains_inline_partners(text, chat_id=chat_id)
+
+    if expected_media_count and len(media_items) < expected_media_count:
+        print(
+            f"Media send blocked for {post_data.get('key')}: expected {expected_media_count}, got {len(media_items)}"
+        )
+        return False
+
+    missing_files = [
+        media_item.get("path")
+        for media_item in media_items
+        if not os.path.exists(media_item.get("path", ""))
+    ]
+    if missing_files:
+        print("Media send blocked: missing files:", ", ".join(safe_console_text(path) for path in missing_files))
+        return False
 
     if len(media_items) == 0:
         response = send_text(text, with_buttons=with_buttons, chat_id=chat_id)
@@ -1592,18 +1805,34 @@ def publish_post_to_channel(post_data, chat_id):
         return response_ok(buttons_response)
 
 
-def publish_post(post_data, use_ai=True):
-    prepared_post = dict(post_data)
-    prepared_post["processed_text"] = build_final_text(prepared_post, use_ai=use_ai)
+def publish_post(post_data, use_ai=True, state=None):
+    post_key = post_data.get("key")
 
     if not TARGET_CHANNELS:
         print("Error: TARGET_CHANNEL or TARGET_CHANNELS is missing")
         return False
 
+    sent_targets = get_sent_targets_for_post(state, post_key) if state and post_key else set()
+
     for chat_id in TARGET_CHANNELS:
+        chat_key = str(chat_id)
+        if chat_key in sent_targets:
+            print("Skipping target already sent:", safe_console_text(chat_id))
+            continue
+
+        prepared_post = dict(post_data)
+        prepared_post["processed_text"] = build_final_text(prepared_post, use_ai=use_ai, chat_id=chat_id)
         print("Publishing to target:", safe_console_text(chat_id))
         if not publish_post_to_channel(prepared_post, chat_id):
             return False
+
+        if state is not None and post_key:
+            mark_target_sent(state, post_key, chat_id)
+            save_state(state)
+
+    if state is not None and post_key:
+        clear_post_progress(state, post_key)
+        save_state(state)
 
     return True
 
@@ -1744,7 +1973,7 @@ async def handle_moderation_updates(client, entity, state):
 
         if action == "approve":
             prepared_post = await rebuild_post_media(client, entity, post_data)
-            success = publish_post(prepared_post, use_ai=False)
+            success = publish_post(prepared_post, use_ai=False, state=state)
             cleanup_media_items(prepared_post.get("media_items") or [])
             if success:
                 post_data["status"] = "approved"
@@ -1838,7 +2067,12 @@ async def main():
                     continue
 
                 await handle_moderation_updates(client, entity, state)
-                new_posts = await get_new_posts_data(client, entity, state.get("last_post_key"))
+                new_posts = await get_new_posts_data(
+                    client,
+                    entity,
+                    state.get("last_post_key"),
+                    limit=NEW_POST_SCAN_LIMIT,
+                )
                 print("New posts found:", len(new_posts))
                 print("State key:", state.get("last_post_key"))
 
@@ -1856,7 +2090,7 @@ async def main():
                     else:
                         print("Route: target channels")
                         prepared_post = await rebuild_post_media(client, entity, post_data)
-                        success = publish_post(prepared_post)
+                        success = publish_post(prepared_post, state=state)
                         cleanup_media_items(prepared_post.get("media_items") or [])
 
                     if success:
