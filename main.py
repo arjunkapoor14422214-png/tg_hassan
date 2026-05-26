@@ -806,8 +806,107 @@ def add_album_footer(text):
     return f"{body}\n\n{ALBUM_CHANNEL_URL}".strip()
 
 
+def split_long_line(line, max_length=95):
+    body = (line or "").strip()
+    if len(body) <= max_length:
+        return [body] if body else []
+
+    split_patterns = [
+        r"(?<=[.!?؟])\s+",
+        r"\s*[,:;،]\s+",
+        r"\s+(?=لكن|لأن|مع|بعد|قبل|واليوم|وايضا|وأيضا|أيضا|while|and|but|because\b)",
+    ]
+
+    for pattern in split_patterns:
+        parts = [part.strip() for part in re.split(pattern, body) if part.strip()]
+        if len(parts) > 1 and max(len(part) for part in parts) < len(body):
+            expanded_parts = []
+            for part in parts:
+                if len(part) > max_length and part != body:
+                    expanded_parts.extend(split_long_line(part, max_length=max_length))
+                else:
+                    expanded_parts.append(part)
+            return expanded_parts
+
+    words = body.split()
+    if len(words) < 6:
+        return [body]
+
+    chunks = []
+    current = []
+    for word in words:
+        candidate = " ".join(current + [word]).strip()
+        if current and len(candidate) > max_length:
+            chunks.append(" ".join(current).strip())
+            current = [word]
+        else:
+            current.append(word)
+
+    if current:
+        chunks.append(" ".join(current).strip())
+
+    return chunks or [body]
+
+
+def should_keep_line_isolated(line):
+    body = (line or "").strip()
+    if not body:
+        return False
+
+    if body.startswith("[[PARTNER") or body.startswith("[[APK"):
+        return True
+    if PROMOCODE_ONLY_PATTERN.match(body):
+        return True
+    if re.search(r"https?://", body):
+        return True
+    if len(body) <= 28:
+        return True
+    if body.endswith(":"):
+        return True
+    return False
+
+
+def format_visual_post(text):
+    body = (text or "").replace("\r\n", "\n").strip()
+    if not body:
+        return body
+
+    raw_lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if not raw_lines:
+        return ""
+
+    expanded_lines = []
+    for raw_line in raw_lines:
+        if should_keep_line_isolated(raw_line):
+            expanded_lines.append(raw_line)
+            continue
+        expanded_lines.extend(split_long_line(raw_line))
+
+    blocks = []
+    current_block = []
+    for line in expanded_lines:
+        if should_keep_line_isolated(line):
+            if current_block:
+                blocks.append("\n".join(current_block).strip())
+                current_block = []
+            blocks.append(line)
+            continue
+
+        current_block.append(line)
+        if len(current_block) >= 2:
+            blocks.append("\n".join(current_block).strip())
+            current_block = []
+
+    if current_block:
+        blocks.append("\n".join(current_block).strip())
+
+    formatted = "\n\n".join(block for block in blocks if block.strip())
+    formatted = re.sub(r"\n{3,}", "\n\n", formatted)
+    return formatted.strip()
+
+
 def finalize_post_text(text, is_album=False, chat_id=None):
-    body = (text or "").strip()
+    body = format_visual_post((text or "").strip())
 
     body = apply_promocode_rule(body, chat_id=chat_id)
     return body
@@ -978,7 +1077,9 @@ def process_text_with_ai(text):
         "Do not invent scores, odds, claims, or urgency. "
         "Use natural Arabic that reads like a real channel post, not a literal translation. "
         "Make the text compact, stylish, and easy to scan in Telegram. "
-        "Prefer 3 to 7 short lines with good rhythm. "
+        "Use 2 to 4 short visual paragraphs separated by blank lines. "
+        "Most paragraphs should be 1 or 2 short lines, not one dense block. "
+        "Prefer 4 to 8 short lines overall with good rhythm. "
         "Use clean unicode emojis with taste. "
         "The opening line should usually include 1 or 2 strong contextual emojis. "
         "Promo, winnings, odds, and key sports lines can use money, fire, rocket, gift, or sports emojis when they fit. "
