@@ -18,6 +18,12 @@ services:
         sync: false
       - key: TARGET_CHANNELS
         sync: false
+      - key: SOURCE_CHANNEL_2
+        sync: false
+      - key: TARGET_CHANNEL_2
+        sync: false
+      - key: TARGET_CHANNELS_2
+        sync: false
       - key: REVIEW_CHANNEL_ID
         value: ""
       - key: SOURCE_CHANNEL
@@ -66,6 +72,10 @@ services:
         value: "PROMOCODE: HASSANKING"
       - key: TARGET_BUTTON3_URL_1003243126359
         value: "https://lckypr.com/Ar0fxvk"
+      - key: TARGET_PROMOCODE_1003992124118
+        value: "PROMOCODE: PROFIT69"
+      - key: TARGET_BUTTON3_URL_1003992124118
+        value: "https://lckypr.com/B3rDdYb"
       - key: APK_URL
         value: "https://t.me/PLATINUM_APK"
       - key: LUCKYPARI_APK_URL

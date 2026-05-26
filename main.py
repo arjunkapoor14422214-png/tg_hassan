@@ -46,7 +46,11 @@ TARGET_CHANNELS = parse_telegram_peers(os.getenv("TARGET_CHANNELS", ""))
 if not TARGET_CHANNELS and TARGET_CHANNEL:
     TARGET_CHANNELS = [parse_telegram_peer(TARGET_CHANNEL)]
 DEFAULT_TARGET_CHANNEL = TARGET_CHANNELS[0] if TARGET_CHANNELS else parse_telegram_peer(TARGET_CHANNEL)
-SOURCE_CHANNEL_ENTITY = parse_telegram_peer(SOURCE_CHANNEL)
+SOURCE_CHANNEL_2 = (os.getenv("SOURCE_CHANNEL_2") or "").strip()
+TARGET_CHANNEL_2 = (os.getenv("TARGET_CHANNEL_2") or "").strip()
+TARGET_CHANNELS_2 = parse_telegram_peers(os.getenv("TARGET_CHANNELS_2", ""))
+if not TARGET_CHANNELS_2 and TARGET_CHANNEL_2:
+    TARGET_CHANNELS_2 = [parse_telegram_peer(TARGET_CHANNEL_2)]
 REVIEW_CHANNEL_ID = os.getenv("REVIEW_CHANNEL_ID", "").strip()
 if REVIEW_CHANNEL_ID.startswith("100"):
     REVIEW_CHANNEL_ID = f"-{REVIEW_CHANNEL_ID}"
@@ -282,8 +286,8 @@ def get_promocode_value(chat_id=None):
     return (get_target_promocode_text(chat_id) or "").strip()
 
 
-def get_source_signature(entity):
-    source_name = (SOURCE_CHANNEL or "").strip().lower()
+def get_source_signature(source_channel, entity):
+    source_name = (source_channel or "").strip().lower()
     entity_id = getattr(entity, "id", "")
     return f"{entity_id}:{source_name}"
 
@@ -315,6 +319,31 @@ KNOWN_SOURCE_BRAND_KEYS = {
     "pariland",
     "megapari",
 }
+
+
+def build_route(route_id, source_channel, target_channels):
+    source_value = (source_channel or "").strip()
+    targets = [chat_id for chat_id in (target_channels or []) if str(chat_id).strip()]
+    if not source_value or not targets:
+        return None
+
+    return {
+        "id": route_id,
+        "source_channel": source_value,
+        "source_entity": parse_telegram_peer(source_value),
+        "target_channels": targets,
+        "default_target_channel": targets[0],
+    }
+
+
+ROUTES = [
+    route
+    for route in [
+        build_route("route_1", SOURCE_CHANNEL, TARGET_CHANNELS),
+        build_route("route_2", SOURCE_CHANNEL_2, TARGET_CHANNELS_2),
+    ]
+    if route
+]
 
 
 def build_partner_block(chat_id=None):
@@ -662,18 +691,18 @@ def post_contains_inline_partners(text, chat_id=None):
     return has_target_partner_block(text, chat_id=chat_id)
 
 
-async def resolve_source_entity(client):
-    if not isinstance(SOURCE_CHANNEL_ENTITY, int):
-        return await client.get_entity(SOURCE_CHANNEL_ENTITY)
+async def resolve_source_entity(client, source_entity):
+    if not isinstance(source_entity, int):
+        return await client.get_entity(source_entity)
 
-    normalized_source_id = normalize_telegram_channel_id(SOURCE_CHANNEL_ENTITY)
+    normalized_source_id = normalize_telegram_channel_id(source_entity)
 
     async for dialog in client.iter_dialogs():
         entity = getattr(dialog, "entity", None)
         if getattr(entity, "id", None) == normalized_source_id:
             return entity
 
-    return await client.get_entity(SOURCE_CHANNEL_ENTITY)
+    return await client.get_entity(source_entity)
 
 
 def build_reply_markup(chat_id=None):
@@ -1215,18 +1244,62 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
-def get_post_progress(state):
-    progress = state.get("post_progress")
+def get_routes_state(state):
+    routes_state = state.get("routes")
+    if isinstance(routes_state, dict):
+        return routes_state
+
+    routes_state = {}
+    state["routes"] = routes_state
+    return routes_state
+
+
+def get_route_state(state, route_id):
+    routes_state = get_routes_state(state)
+    route_state = routes_state.get(route_id)
+    if isinstance(route_state, dict):
+        return route_state
+
+    route_state = {}
+    routes_state[route_id] = route_state
+    return route_state
+
+
+def migrate_legacy_state(state):
+    if state.get("routes"):
+        return state
+
+    if not ROUTES:
+        return state
+
+    if state.get("last_post_key") or state.get("source_signature") or state.get("post_progress"):
+        default_route_state = get_route_state(state, ROUTES[0]["id"])
+        if state.get("last_post_key") and not default_route_state.get("last_post_key"):
+            default_route_state["last_post_key"] = state.get("last_post_key")
+        if state.get("source_signature") and not default_route_state.get("source_signature"):
+            default_route_state["source_signature"] = state.get("source_signature")
+        if state.get("post_progress") and not default_route_state.get("post_progress"):
+            default_route_state["post_progress"] = state.get("post_progress")
+
+    state.pop("last_post_key", None)
+    state.pop("source_signature", None)
+    state.pop("post_progress", None)
+    return state
+
+
+def get_post_progress(state, route_id):
+    route_state = get_route_state(state, route_id)
+    progress = route_state.get("post_progress")
     if isinstance(progress, dict):
         return progress
 
     progress = {}
-    state["post_progress"] = progress
+    route_state["post_progress"] = progress
     return progress
 
 
-def get_sent_targets_for_post(state, post_key):
-    progress = get_post_progress(state)
+def get_sent_targets_for_post(state, route_id, post_key):
+    progress = get_post_progress(state, route_id)
     return {
         str(chat_id)
         for chat_id in progress.get(str(post_key), [])
@@ -1234,19 +1307,20 @@ def get_sent_targets_for_post(state, post_key):
     }
 
 
-def mark_target_sent(state, post_key, chat_id):
-    progress = get_post_progress(state)
+def mark_target_sent(state, route_id, post_key, chat_id):
+    progress = get_post_progress(state, route_id)
     key = str(post_key)
-    sent_targets = get_sent_targets_for_post(state, post_key)
+    sent_targets = get_sent_targets_for_post(state, route_id, post_key)
     sent_targets.add(str(chat_id))
     progress[key] = sorted(sent_targets)
 
 
-def clear_post_progress(state, post_key):
-    progress = get_post_progress(state)
+def clear_post_progress(state, route_id, post_key):
+    route_state = get_route_state(state, route_id)
+    progress = get_post_progress(state, route_id)
     progress.pop(str(post_key), None)
     if not progress:
-        state.pop("post_progress", None)
+        route_state.pop("post_progress", None)
 
 
 def load_pending():
@@ -1807,14 +1881,16 @@ def publish_post_to_channel(post_data, chat_id):
 
 def publish_post(post_data, use_ai=True, state=None):
     post_key = post_data.get("key")
+    route_id = post_data.get("route_id", "route_1")
+    target_channels = post_data.get("target_channels") or TARGET_CHANNELS
 
-    if not TARGET_CHANNELS:
+    if not target_channels:
         print("Error: TARGET_CHANNEL or TARGET_CHANNELS is missing")
         return False
 
-    sent_targets = get_sent_targets_for_post(state, post_key) if state and post_key else set()
+    sent_targets = get_sent_targets_for_post(state, route_id, post_key) if state and post_key else set()
 
-    for chat_id in TARGET_CHANNELS:
+    for chat_id in target_channels:
         chat_key = str(chat_id)
         if chat_key in sent_targets:
             print("Skipping target already sent:", safe_console_text(chat_id))
@@ -1827,11 +1903,11 @@ def publish_post(post_data, use_ai=True, state=None):
             return False
 
         if state is not None and post_key:
-            mark_target_sent(state, post_key, chat_id)
+            mark_target_sent(state, route_id, post_key, chat_id)
             save_state(state)
 
     if state is not None and post_key:
-        clear_post_progress(state, post_key)
+        clear_post_progress(state, route_id, post_key)
         save_state(state)
 
     return True
@@ -1907,6 +1983,9 @@ def queue_post_for_review(post_data):
     )
     prepared_post["processed_text"] = process_text_with_ai(ai_input)
     prepared_post["status"] = "pending"
+    prepared_post["route_id"] = post_data.get("route_id")
+    prepared_post["source_channel"] = post_data.get("source_channel")
+    prepared_post["target_channels"] = post_data.get("target_channels")
 
     success = send_post_to_review(prepared_post)
     cleanup_media_items(prepared_post.get("media_items") or [])
@@ -1972,7 +2051,9 @@ async def handle_moderation_updates(client, entity, state):
             continue
 
         if action == "approve":
-            prepared_post = await rebuild_post_media(client, entity, post_data)
+            source_channel = post_data.get("source_channel") or SOURCE_CHANNEL
+            source_entity = await resolve_source_entity(client, parse_telegram_peer(source_channel))
+            prepared_post = await rebuild_post_media(client, source_entity, post_data)
             success = publish_post(prepared_post, use_ai=False, state=state)
             cleanup_media_items(prepared_post.get("media_items") or [])
             if success:
@@ -1997,6 +2078,85 @@ async def handle_moderation_updates(client, entity, state):
     save_state(state)
 
 
+async def process_route(client, route, state):
+    route_id = route["id"]
+    route_state = get_route_state(state, route_id)
+    entity = await resolve_source_entity(client, route["source_entity"])
+
+    if not route_state.get("initialized"):
+        first_post_key = await get_latest_post_key(client, entity)
+        current_source_signature = get_source_signature(route["source_channel"], entity)
+
+        if not first_post_key:
+            print(f"[{route_id}] No messages in source channel")
+            route_state["initialized"] = True
+            save_state(state)
+            return
+
+        if route_state.get("source_signature") != current_source_signature:
+            route_state["source_signature"] = current_source_signature
+            route_state["last_post_key"] = first_post_key
+            route_state["initialized"] = True
+            save_state(state)
+            print(f"[{route_id}] Source changed: current last post saved, waiting for new posts")
+            return
+
+        if not route_state.get("last_post_key"):
+            route_state["last_post_key"] = first_post_key
+            route_state["source_signature"] = current_source_signature
+            route_state["initialized"] = True
+            save_state(state)
+            print(f"[{route_id}] First start: current last post saved, waiting for new posts")
+            return
+
+        route_state["initialized"] = True
+        save_state(state)
+
+    print(f"[{route_id}] SOURCE_CHANNEL:", safe_console_text(route["source_channel"]))
+    print(f"[{route_id}] Source found:", safe_console_text(getattr(entity, "title", "no title")))
+    print(
+        f"[{route_id}] Target channels:",
+        ", ".join(safe_console_text(chat_id) for chat_id in route["target_channels"]),
+    )
+
+    new_posts = await get_new_posts_data(
+        client,
+        entity,
+        route_state.get("last_post_key"),
+        limit=NEW_POST_SCAN_LIMIT,
+    )
+    print(f"[{route_id}] New posts found:", len(new_posts))
+    print(f"[{route_id}] State key:", route_state.get("last_post_key"))
+
+    if not new_posts:
+        print(f"[{route_id}] No new posts")
+        return
+
+    for post_data in new_posts:
+        print(f"[{route_id}] Processing post: {post_data['key']}")
+        prepared_post = dict(post_data)
+        prepared_post["route_id"] = route_id
+        prepared_post["source_channel"] = route["source_channel"]
+        prepared_post["target_channels"] = route["target_channels"]
+
+        if REVIEW_MODE:
+            print(f"[{route_id}] Route: review channel")
+            prepared_post = await rebuild_post_media(client, entity, prepared_post)
+            success = queue_post_for_review(prepared_post)
+        else:
+            print(f"[{route_id}] Route: target channels")
+            prepared_post = await rebuild_post_media(client, entity, prepared_post)
+            success = publish_post(prepared_post, state=state)
+            cleanup_media_items(prepared_post.get("media_items") or [])
+
+        if success:
+            route_state["last_post_key"] = post_data["key"]
+            save_state(state)
+            print(f"[{route_id}] Post sent and state updated")
+        else:
+            print(f"[{route_id}] Send error: state.json not updated")
+            break
+
 
 async def main():
     if not API_ID:
@@ -2007,12 +2167,8 @@ async def main():
         print("Error: TG_API_HASH is missing")
         return
 
-    if not SOURCE_CHANNEL:
-        print("Error: SOURCE_CHANNEL is missing")
-        return
-
-    if not TARGET_CHANNELS:
-        print("Error: TARGET_CHANNEL or TARGET_CHANNELS is missing")
+    if not ROUTES:
+        print("Error: at least one SOURCE_CHANNEL/TARGET_CHANNELS route is required")
         return
 
     if not BOT_TOKEN:
@@ -2031,75 +2187,22 @@ async def main():
     print("Review mode:", "ON" if REVIEW_MODE else "OFF")
     if REVIEW_MODE:
         print("Review channel:", safe_console_text(REVIEW_CHANNEL_ID))
-    print("Target channels:", ", ".join(safe_console_text(chat_id) for chat_id in TARGET_CHANNELS))
-
-    entity = await resolve_source_entity(client)
-    print("SOURCE_CHANNEL:", safe_console_text(SOURCE_CHANNEL))
-    print("Source found:", safe_console_text(getattr(entity, "title", "no title")))
-    state = load_state()
+    print("Routes configured:", len(ROUTES))
+    state = migrate_legacy_state(load_state())
+    save_state(state)
 
     try:
-        first_post_key = await get_latest_post_key(client, entity)
-        current_source_signature = get_source_signature(entity)
-
-        if not first_post_key:
-            print("No messages in source channel")
-            await client.disconnect()
-            return
-
-        if state.get("source_signature") != current_source_signature:
-            state["source_signature"] = current_source_signature
-            state["last_post_key"] = first_post_key
-            save_state(state)
-            save_pending({})
-            print("Source changed: current last post saved, waiting for new posts")
-
-        if not state.get("last_post_key"):
-            state["last_post_key"] = first_post_key
-            state["source_signature"] = current_source_signature
-            save_state(state)
-            print("First start: current last post saved, waiting for new posts")
-
         while True:
             try:
                 if not await ensure_client_connected(client):
                     await asyncio.sleep(CHECK_INTERVAL)
                     continue
 
-                await handle_moderation_updates(client, entity, state)
-                new_posts = await get_new_posts_data(
-                    client,
-                    entity,
-                    state.get("last_post_key"),
-                    limit=NEW_POST_SCAN_LIMIT,
-                )
-                print("New posts found:", len(new_posts))
-                print("State key:", state.get("last_post_key"))
+                if REVIEW_MODE:
+                    await handle_moderation_updates(client, None, state)
 
-                if not new_posts:
-                    print("No new posts")
-                    await asyncio.sleep(CHECK_INTERVAL)
-                    continue
-
-                for post_data in new_posts:
-                    print(f"Processing post: {post_data['key']}")
-                    if REVIEW_MODE:
-                        print("Route: review channel")
-                        prepared_post = await rebuild_post_media(client, entity, post_data)
-                        success = queue_post_for_review(prepared_post)
-                    else:
-                        print("Route: target channels")
-                        prepared_post = await rebuild_post_media(client, entity, post_data)
-                        success = publish_post(prepared_post, state=state)
-                        cleanup_media_items(prepared_post.get("media_items") or [])
-
-                    if success:
-                        state["last_post_key"] = post_data["key"]
-                        save_state(state)
-                        print("Post sent and state updated")
-                    else:
-                        print("Send error: state.json not updated")
-                        break
+                for route in ROUTES:
+                    await process_route(client, route, state)
 
             except Exception as e:
                 print("Loop error:", str(e))
