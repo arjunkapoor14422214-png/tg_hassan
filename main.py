@@ -137,6 +137,9 @@ SOURCE_PROMOCODE_PATTERN = re.compile(r"(?i)\bleg230\b")
 PROMOCODE_MARKER_PATTERN = re.compile(
     r"(?i)\b(?:promo\s*code|promocode|code\s*promo|promo\s*cod(?:e)?|كود(?:\s*(?:البرومو|العرض))?|رمز(?:\s*البرومو)?|برومو\s*كود)\b"
 )
+PROMOCODE_LINE_VALUE_PATTERN = re.compile(
+    r"(?is)^(?P<prefix>\s*(?:[^\w\u0600-\u06FF]+?\s*)?(?:promo\s*code|promocode|code\s*promo|promo\s*cod(?:e)?|كود(?:\s*(?:البرومو|العرض))?|رمز(?:\s*البرومو)?|برومو\s*كود)\s*[:：\-–—]?\s*)(?P<code>[A-Za-z0-9_-]{3,})(?P<suffix>.*)$"
+)
 PROMOCODE_ONLY_PATTERN = re.compile(
     r"(?im)^\s*(?:[^\w\u0600-\u06FF]+?\s*)?(?:promo\s*code|promocode|code\s*promo|promo\s*cod(?:e)?|كود(?:\s*(?:البرومو|العرض))?|رمز(?:\s*البرومو)?|برومو\s*كود)\b.*$"
 )
@@ -505,15 +508,30 @@ def is_promocode_only_line(line):
     return bool(PROMOCODE_ONLY_PATTERN.match((line or "").strip()))
 
 
+def rewrite_promocode_line(line, chat_id=None):
+    body = (line or "").strip()
+    if not body:
+        return body
+
+    match = PROMOCODE_LINE_VALUE_PATTERN.match(body)
+    if not match:
+        return get_target_promocode_text(chat_id)
+
+    prefix = match.group("prefix") or ""
+    suffix = match.group("suffix") or ""
+    target_code = get_promocode_value(chat_id)
+    rewritten = f"{prefix}{target_code}{suffix}".strip()
+    return rewritten or get_target_promocode_text(chat_id)
+
+
 def normalize_promocode_lines(text, chat_id=None):
-    target_promocode = get_target_promocode_text(chat_id)
     normalized_lines = []
     promocode_added = False
 
     for raw_line in (text or "").splitlines():
         if is_promocode_only_line(raw_line):
             if not promocode_added:
-                normalized_lines.append(target_promocode)
+                normalized_lines.append(rewrite_promocode_line(raw_line, chat_id=chat_id))
                 promocode_added = True
             continue
         normalized_lines.append(raw_line)
@@ -773,7 +791,7 @@ def apply_promocode_rule(text, chat_id=None):
         return promocode_text
 
     if PROMOCODE_ONLY_PATTERN.search(text):
-        return PROMOCODE_ONLY_PATTERN.sub(promocode_text, text).strip()
+        return text.strip()
 
     return f"{text}\n\n{promocode_text}"
 
@@ -783,7 +801,15 @@ def prepare_telegram_text(text, limit=None, chat_id=None):
     if limit:
         text = text[:limit]
 
-    safe_text = escape(text)
+    safe_lines = []
+    for raw_line in text.splitlines():
+        line = raw_line or ""
+        escaped_line = escape(line)
+        if is_promocode_only_line(line):
+            escaped_line = f"<b>{escaped_line}</b>"
+        safe_lines.append(escaped_line)
+
+    safe_text = "\n".join(safe_lines)
     apk_link = f'<a href="{escape(APK_URL, quote=True)}">APK</a>'
     safe_text = re.sub(r"\bAPK\b", apk_link, safe_text, flags=re.IGNORECASE)
 
