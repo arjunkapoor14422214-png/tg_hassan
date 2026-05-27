@@ -38,6 +38,23 @@ def normalize_telegram_channel_id(value):
     return None
 
 
+def env_flag(key, default=False):
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def route_env_prefix(route_id):
+    return re.sub(r"[^A-Z0-9]+", "_", (route_id or "").upper()).strip("_")
+
+
+def route_backfill_latest_once_enabled(route_id):
+    if not route_id:
+        return False
+    return env_flag(f"{route_env_prefix(route_id)}_BACKFILL_LATEST_ONCE", False)
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -54,10 +71,10 @@ if not TARGET_CHANNELS_2 and TARGET_CHANNEL_2:
 REVIEW_CHANNEL_ID = os.getenv("REVIEW_CHANNEL_ID", "").strip()
 if REVIEW_CHANNEL_ID.startswith("100"):
     REVIEW_CHANNEL_ID = f"-{REVIEW_CHANNEL_ID}"
-MODERATION_ENABLED = os.getenv("MODERATION_ENABLED", "false").strip().lower() == "true"
+MODERATION_ENABLED = env_flag("MODERATION_ENABLED", False)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
-AI_ENABLED = os.getenv("AI_ENABLED", "false").strip().lower() == "true"
+AI_ENABLED = env_flag("AI_ENABLED", False)
 AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini").strip()
 AI_STYLE_PROMPT = os.getenv(
@@ -76,7 +93,7 @@ AI_STYLE_PROMPT = os.getenv(
 AI_TARGET_LANG = os.getenv("AI_TARGET_LANG", "").strip()
 PROMOCODE_TEXT = os.getenv("PROMOCODE_TEXT", "PROMOCODE: NILE").strip() or "PROMOCODE: NILE"
 APK_URL = os.getenv("APK_URL", "https://t.me/PLATINUM_APK").strip() or "https://t.me/PLATINUM_APK"
-PRIMARY_PARTNER_ONLY_MODE = os.getenv("PRIMARY_PARTNER_ONLY_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+PRIMARY_PARTNER_ONLY_MODE = env_flag("PRIMARY_PARTNER_ONLY_MODE", False)
 
 BUTTON1_TEXT = os.getenv("BUTTON1_TEXT")
 BUTTON1_URL = os.getenv("BUTTON1_URL")
@@ -2212,6 +2229,35 @@ async def process_route(client, route, state):
 
         route_state["initialized"] = True
         save_state(state)
+
+    if route_backfill_latest_once_enabled(route_id) and not route_state.get("latest_backfill_once_completed"):
+        latest_posts = await get_new_posts_data(client, entity, last_post_key=None, limit=1)
+        if latest_posts:
+            latest_post = latest_posts[-1]
+            print(f"[{route_id}] Backfill latest once: {latest_post['key']}")
+            prepared_post = dict(latest_post)
+            prepared_post["route_id"] = route_id
+            prepared_post["source_channel"] = route["source_channel"]
+            prepared_post["target_channels"] = route["target_channels"]
+
+            if REVIEW_MODE:
+                print(f"[{route_id}] Backfill route: review channel")
+                prepared_post = await rebuild_post_media(client, entity, prepared_post)
+                success = queue_post_for_review(prepared_post)
+            else:
+                print(f"[{route_id}] Backfill route: target channels")
+                prepared_post = await rebuild_post_media(client, entity, prepared_post)
+                success = publish_post(prepared_post, state=state)
+                cleanup_media_items(prepared_post.get("media_items") or [])
+
+            if success:
+                route_state["last_post_key"] = latest_post["key"]
+                route_state["latest_backfill_once_completed"] = True
+                save_state(state)
+                print(f"[{route_id}] Backfill latest once completed")
+            else:
+                print(f"[{route_id}] Backfill latest once failed")
+                return
 
     print(f"[{route_id}] SOURCE_CHANNEL:", safe_console_text(route["source_channel"]))
     print(f"[{route_id}] Source found:", safe_console_text(getattr(entity, "title", "no title")))
