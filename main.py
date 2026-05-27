@@ -134,8 +134,11 @@ SOURCE_BRAND_PATTERN = re.compile(
 )
 SOURCE_LINK_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 SOURCE_PROMOCODE_PATTERN = re.compile(r"(?i)\bleg230\b")
+PROMOCODE_MARKER_PATTERN = re.compile(
+    r"(?i)\b(?:promo\s*code|promocode|code\s*promo|promo\s*cod(?:e)?|كود(?:\s*(?:البرومو|العرض))?|رمز(?:\s*البرومو)?|برومو\s*كود)\b"
+)
 PROMOCODE_ONLY_PATTERN = re.compile(
-    r"(?im)^\s*(?:promo\s*code|promocode|كود(?:\s*البرومو)?|رمز(?:\s*البرومو)?|برومو\s*كود).*$"
+    r"(?im)^\s*(?:[^\w\u0600-\u06FF]+?\s*)?(?:promo\s*code|promocode|code\s*promo|promo\s*cod(?:e)?|كود(?:\s*(?:البرومو|العرض))?|رمز(?:\s*البرومو)?|برومو\s*كود)\b.*$"
 )
 PARTNER_LINE_KEYWORDS = (
     "سجل",
@@ -502,6 +505,22 @@ def is_promocode_only_line(line):
     return bool(PROMOCODE_ONLY_PATTERN.match((line or "").strip()))
 
 
+def normalize_promocode_lines(text, chat_id=None):
+    target_promocode = get_target_promocode_text(chat_id)
+    normalized_lines = []
+    promocode_added = False
+
+    for raw_line in (text or "").splitlines():
+        if is_promocode_only_line(raw_line):
+            if not promocode_added:
+                normalized_lines.append(target_promocode)
+                promocode_added = True
+            continue
+        normalized_lines.append(raw_line)
+
+    return "\n".join(normalized_lines)
+
+
 def has_source_partner_block(text):
     body = text or ""
     if not body.strip():
@@ -644,7 +663,7 @@ def remove_ignored_code_lines(text, chat_id=None):
 
 
 def strip_source_markers(text, chat_id=None):
-    body = remove_ignored_code_lines(text or "", chat_id=chat_id)
+    body = normalize_promocode_lines(remove_ignored_code_lines(text or "", chat_id=chat_id), chat_id=chat_id)
     body = re.sub(r"\[[^\]]+\]", "", body)
     body = re.sub(r"(?<!\S)@[A-Za-z0-9_]{3,}", "", body)
     body = SOURCE_PROMOCODE_PATTERN.sub(get_promocode_value(chat_id), body)
@@ -691,6 +710,7 @@ def remove_source_brand_residue(text, chat_id=None):
     body = strip_source_markers(text, chat_id=chat_id)
     body = SOURCE_LINK_PATTERN.sub("", body)
     body = replace_source_brand_mentions(body, chat_id=chat_id)
+    body = normalize_promocode_lines(body, chat_id=chat_id)
 
     cleaned_lines = []
     for raw_line in body.splitlines():
@@ -747,7 +767,7 @@ def build_moderation_markup(post_key):
 
 
 def apply_promocode_rule(text, chat_id=None):
-    text = (text or "").strip()
+    text = normalize_promocode_lines((text or "").strip(), chat_id=chat_id)
     promocode_text = get_target_promocode_text(chat_id)
     if not text:
         return promocode_text
@@ -1102,6 +1122,7 @@ def process_text_with_ai(text):
         "Promo, winnings, odds, and key sports lines can use money, fire, rocket, gift, or sports emojis when they fit. "
         "Do not overload every line. "
         "Keep target brand names only when they already appear in the source text you receive. "
+        "If the source contains a promo code or code promo line, never keep the original code value. "
         "Never mention the source channel, source attribution, or source betting brands. "
         "Do not add hashtags, markdown, bullet lists, explanations, or quotation marks around the answer. "
         "Do not add footer links or button labels. "
