@@ -24,6 +24,12 @@ services:
         sync: false
       - key: TARGET_CHANNELS_2
         sync: false
+      - key: SOURCE_CHANNEL_3
+        sync: false
+      - key: TARGET_CHANNEL_3
+        sync: false
+      - key: TARGET_CHANNELS_3
+        sync: false
       - key: REVIEW_CHANNEL_ID
         value: ""
       - key: SOURCE_CHANNEL

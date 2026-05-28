@@ -68,6 +68,11 @@ TARGET_CHANNEL_2 = (os.getenv("TARGET_CHANNEL_2") or "").strip()
 TARGET_CHANNELS_2 = parse_telegram_peers(os.getenv("TARGET_CHANNELS_2", ""))
 if not TARGET_CHANNELS_2 and TARGET_CHANNEL_2:
     TARGET_CHANNELS_2 = [parse_telegram_peer(TARGET_CHANNEL_2)]
+SOURCE_CHANNEL_3 = (os.getenv("SOURCE_CHANNEL_3") or "").strip()
+TARGET_CHANNEL_3 = (os.getenv("TARGET_CHANNEL_3") or "").strip()
+TARGET_CHANNELS_3 = parse_telegram_peers(os.getenv("TARGET_CHANNELS_3", ""))
+if not TARGET_CHANNELS_3 and TARGET_CHANNEL_3:
+    TARGET_CHANNELS_3 = [parse_telegram_peer(TARGET_CHANNEL_3)]
 REVIEW_CHANNEL_ID = os.getenv("REVIEW_CHANNEL_ID", "").strip()
 if REVIEW_CHANNEL_ID.startswith("100"):
     REVIEW_CHANNEL_ID = f"-{REVIEW_CHANNEL_ID}"
@@ -365,6 +370,7 @@ ROUTES = [
     for route in [
         build_route("route_1", SOURCE_CHANNEL, TARGET_CHANNELS),
         build_route("route_2", SOURCE_CHANNEL_2, TARGET_CHANNELS_2),
+        build_route("route_3", SOURCE_CHANNEL_3, TARGET_CHANNELS_3),
     ]
     if route
 ]
