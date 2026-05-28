@@ -1255,7 +1255,7 @@ def perform_post_request(url, request_name="request", timeout=60, **kwargs):
 
 
 
-def send_text(text, with_buttons=False, chat_id=None, reply_markup=None):
+def send_text(text, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     normalized_text = text
 
@@ -1269,6 +1269,9 @@ def send_text(text, with_buttons=False, chat_id=None, reply_markup=None):
         "parse_mode": "HTML",
     }
 
+    if reply_to_message_id:
+        payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
+
     if reply_markup:
         payload["reply_markup"] = reply_markup
     elif with_buttons:
@@ -1280,7 +1283,7 @@ def send_text(text, with_buttons=False, chat_id=None, reply_markup=None):
 
 
 
-def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_markup=None):
+def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
 
     data = {
@@ -1288,6 +1291,9 @@ def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_
         "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id),
         "parse_mode": "HTML",
     }
+
+    if reply_to_message_id:
+        data["reply_parameters"] = json.dumps({"message_id": int(reply_to_message_id)}, ensure_ascii=False)
 
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
@@ -1307,7 +1313,7 @@ def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_
         )
 
 
-def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_markup=None):
+def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
 
     data = {
@@ -1316,6 +1322,9 @@ def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_
         "parse_mode": "HTML",
         "supports_streaming": True,
     }
+
+    if reply_to_message_id:
+        data["reply_parameters"] = json.dumps({"message_id": int(reply_to_message_id)}, ensure_ascii=False)
 
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
@@ -1335,7 +1344,7 @@ def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_
         )
 
 
-def send_media_group(media_items, caption, chat_id=None):
+def send_media_group(media_items, caption, chat_id=None, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMediaGroup"
 
     media = []
@@ -1365,6 +1374,9 @@ def send_media_group(media_items, caption, chat_id=None):
             "chat_id": chat_id or TARGET_CHANNEL,
             "media": json.dumps(media, ensure_ascii=False),
         }
+
+        if reply_to_message_id:
+            data["reply_parameters"] = json.dumps({"message_id": int(reply_to_message_id)}, ensure_ascii=False)
 
         return perform_post_request(
             url,
@@ -1488,6 +1500,52 @@ def clear_post_progress(state, route_id, post_key):
         route_state.pop("post_progress", None)
 
 
+def get_message_map(state, route_id):
+    route_state = get_route_state(state, route_id)
+    message_map = route_state.get("message_map")
+    if isinstance(message_map, dict):
+        return message_map
+
+    message_map = {}
+    route_state["message_map"] = message_map
+    return message_map
+
+
+def get_target_message_id_for_source(state, route_id, chat_id, source_ref):
+    if state is None or not source_ref:
+        return None
+
+    message_map = get_message_map(state, route_id)
+    chat_map = message_map.get(str(chat_id))
+    if not isinstance(chat_map, dict):
+        return None
+
+    target_message_id = chat_map.get(str(source_ref))
+    if isinstance(target_message_id, int):
+        return target_message_id
+
+    if isinstance(target_message_id, str) and target_message_id.isdigit():
+        return int(target_message_id)
+
+    return None
+
+
+def store_target_message_mapping(state, route_id, chat_id, source_refs, target_message_id):
+    if state is None or not source_refs or not target_message_id:
+        return
+
+    message_map = get_message_map(state, route_id)
+    chat_key = str(chat_id)
+    chat_map = message_map.get(chat_key)
+    if not isinstance(chat_map, dict):
+        chat_map = {}
+        message_map[chat_key] = chat_map
+
+    for source_ref in source_refs:
+        if source_ref:
+            chat_map[str(source_ref)] = int(target_message_id)
+
+
 def load_pending():
     if not os.path.exists(PENDING_FILE):
         return {}
@@ -1520,6 +1578,25 @@ def get_post_key(message):
     if message.grouped_id:
         return f"group_{message.grouped_id}"
     return f"msg_{message.id}"
+
+
+def get_message_ref_by_id(message_id):
+    if not message_id:
+        return None
+    return f"msg_{int(message_id)}"
+
+
+def get_reply_to_source_ref(messages):
+    for message in reversed(messages or []):
+        reply_to = getattr(message, "reply_to", None)
+        if not reply_to:
+            continue
+
+        reply_to_msg_id = getattr(reply_to, "reply_to_msg_id", None) or getattr(reply_to, "reply_to_top_id", None)
+        if reply_to_msg_id:
+            return get_message_ref_by_id(reply_to_msg_id)
+
+    return None
 
 
 def utf16_offset_to_index(text, offset):
@@ -1720,10 +1797,6 @@ def should_skip_post(messages):
 
     has_text = any(get_message_text(message).strip() for message in post_messages)
     has_supported_media = count_supported_media(post_messages) > 0
-    if not has_supported_media and has_text and any(has_reply_reference(message) for message in post_messages):
-        print("Skip reason: text reply")
-        return True
-
     if not has_supported_media and not has_text:
         print("Skip reason: no supported content")
         return True
@@ -1916,6 +1989,10 @@ async def get_post_data(client, entity):
         "photo_paths": [],
         "media_count": count_supported_media(post_messages),
         "source_message_id": last_msg.id,
+        "source_message_refs": list(dict.fromkeys(
+            [get_post_key(last_msg)] + [get_message_ref_by_id(getattr(message, "id", None)) for message in post_messages]
+        )),
+        "source_reply_to_key": get_reply_to_source_ref(post_messages),
         "inline_partners": inline_partners,
         "primary_partner_only": primary_partner_only,
         "with_buttons": not inline_partners and not has_companies,
@@ -1954,6 +2031,10 @@ async def build_post_data_from_messages(client, messages):
         "photo_paths": [],
         "media_count": count_supported_media(post_messages),
         "source_message_id": last_msg.id,
+        "source_message_refs": list(dict.fromkeys(
+            [get_post_key(last_msg)] + [get_message_ref_by_id(getattr(message, "id", None)) for message in post_messages]
+        )),
+        "source_reply_to_key": get_reply_to_source_ref(post_messages),
         "inline_partners": inline_partners,
         "primary_partner_only": primary_partner_only,
         "with_buttons": not inline_partners and not has_companies,
@@ -2000,7 +2081,34 @@ def response_ok(response):
     except Exception:
         return response.status_code == 200
 
-def publish_post_to_channel(post_data, chat_id):
+
+def get_response_message_ids(response):
+    try:
+        data = response.json()
+    except Exception:
+        return []
+
+    if response.status_code != 200 or data.get("ok") is not True:
+        return []
+
+    result = data.get("result")
+    if isinstance(result, dict):
+        message_id = result.get("message_id")
+        return [int(message_id)] if message_id else []
+
+    if isinstance(result, list):
+        message_ids = []
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+            message_id = item.get("message_id")
+            if message_id:
+                message_ids.append(int(message_id))
+        return message_ids
+
+    return []
+
+def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
     text = post_data.get("processed_text", "")
     expected_media_count = int(post_data.get("media_count") or 0)
     media_items = post_data.get("media_items")
@@ -2016,7 +2124,7 @@ def publish_post_to_channel(post_data, chat_id):
         print(
             f"Media send blocked for {post_data.get('key')}: expected {expected_media_count}, got {len(media_items)}"
         )
-        return False
+        return None
 
     missing_files = [
         media_item.get("path")
@@ -2025,46 +2133,70 @@ def publish_post_to_channel(post_data, chat_id):
     ]
     if missing_files:
         print("Media send blocked: missing files:", ", ".join(safe_console_text(path) for path in missing_files))
-        return False
+        return None
 
     if len(media_items) == 0:
-        response = send_text(text, with_buttons=with_buttons, chat_id=chat_id)
+        response = send_text(
+            text,
+            with_buttons=with_buttons,
+            chat_id=chat_id,
+            reply_to_message_id=reply_to_message_id,
+        )
         print(f"Text sent to {safe_console_text(chat_id)}:", response.status_code)
         print(response.text)
-        return response_ok(response)
+        message_ids = get_response_message_ids(response)
+        return message_ids[0] if response_ok(response) and message_ids else None
 
     elif len(media_items) == 1:
         media_item = media_items[0]
         if media_item.get("type") == "video":
-            response = send_one_video(media_item["path"], text, with_buttons=with_buttons, chat_id=chat_id)
+            response = send_one_video(
+                media_item["path"],
+                text,
+                with_buttons=with_buttons,
+                chat_id=chat_id,
+                reply_to_message_id=reply_to_message_id,
+            )
             print(f"One video sent to {safe_console_text(chat_id)}:", response.status_code)
         else:
-            response = send_one_photo(media_item["path"], text, with_buttons=with_buttons, chat_id=chat_id)
+            response = send_one_photo(
+                media_item["path"],
+                text,
+                with_buttons=with_buttons,
+                chat_id=chat_id,
+                reply_to_message_id=reply_to_message_id,
+            )
             print(f"One photo sent to {safe_console_text(chat_id)}:", response.status_code)
         print(response.text)
-        return response_ok(response)
+        message_ids = get_response_message_ids(response)
+        return message_ids[0] if response_ok(response) and message_ids else None
 
     else:
-        response = send_media_group(media_items, text, chat_id=chat_id)
+        response = send_media_group(media_items, text, chat_id=chat_id, reply_to_message_id=reply_to_message_id)
         print(f"Album sent to {safe_console_text(chat_id)} ({len(media_items)} media):", response.status_code)
         print(response.text)
 
         if not response_ok(response):
-            return False
+            return None
+
+        message_ids = get_response_message_ids(response)
+        target_message_id = message_ids[0] if message_ids else None
 
         if not with_buttons:
-            return True
+            return target_message_id
 
         buttons_response = send_text("ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", with_buttons=True, chat_id=chat_id)
         print(f"Buttons sent to {safe_console_text(chat_id)}:", buttons_response.status_code)
         print(buttons_response.text)
-        return response_ok(buttons_response)
+        return target_message_id if response_ok(buttons_response) else None
 
 
 def publish_post(post_data, use_ai=True, state=None):
     post_key = post_data.get("key")
     route_id = post_data.get("route_id", "route_1")
     target_channels = post_data.get("target_channels") or TARGET_CHANNELS
+    source_reply_to_key = post_data.get("source_reply_to_key")
+    source_message_refs = post_data.get("source_message_refs") or [post_key]
 
     if not target_channels:
         print("Error: TARGET_CHANNEL or TARGET_CHANNELS is missing")
@@ -2080,11 +2212,28 @@ def publish_post(post_data, use_ai=True, state=None):
 
         prepared_post = dict(post_data)
         prepared_post["processed_text"] = build_final_text(prepared_post, use_ai=use_ai, chat_id=chat_id)
+        reply_to_message_id = None
+
+        if source_reply_to_key:
+            reply_to_message_id = get_target_message_id_for_source(state, route_id, chat_id, source_reply_to_key)
+            if not reply_to_message_id:
+                print(
+                    "Skipping reply post for target: missing parent mapping",
+                    safe_console_text(chat_id),
+                    safe_console_text(source_reply_to_key),
+                )
+                if state is not None and post_key:
+                    mark_target_sent(state, route_id, post_key, chat_id)
+                    save_state(state)
+                continue
+
         print("Publishing to target:", safe_console_text(chat_id))
-        if not publish_post_to_channel(prepared_post, chat_id):
+        target_message_id = publish_post_to_channel(prepared_post, chat_id, reply_to_message_id=reply_to_message_id)
+        if not target_message_id:
             return False
 
         if state is not None and post_key:
+            store_target_message_mapping(state, route_id, chat_id, source_message_refs, target_message_id)
             mark_target_sent(state, route_id, post_key, chat_id)
             save_state(state)
 
