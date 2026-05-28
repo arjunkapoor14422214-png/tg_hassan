@@ -1689,6 +1689,18 @@ def has_file_media(message):
     return True
 
 
+def has_reply_reference(message):
+    reply_to = getattr(message, "reply_to", None)
+    if not reply_to:
+        return False
+
+    if getattr(reply_to, "reply_to_msg_id", None):
+        return True
+    if getattr(reply_to, "reply_to_top_id", None):
+        return True
+    return True
+
+
 def should_skip_post(messages):
     post_messages = messages or []
     if not post_messages:
@@ -1707,7 +1719,12 @@ def should_skip_post(messages):
         return True
 
     has_text = any(get_message_text(message).strip() for message in post_messages)
-    if count_supported_media(post_messages) == 0 and not has_text:
+    has_supported_media = count_supported_media(post_messages) > 0
+    if not has_supported_media and has_text and any(has_reply_reference(message) for message in post_messages):
+        print("Skip reason: text reply")
+        return True
+
+    if not has_supported_media and not has_text:
         print("Skip reason: no supported content")
         return True
 
