@@ -119,6 +119,7 @@ TEXT_LINK_TOKENS = [
     ("[[APK4]]", "Linebet APK", LINEBET_APK_URL),
 ]
 TARGET_PARTNER_TOKEN_PATTERN = re.compile(r"\[\[PARTNER\d+\]\]")
+INLINE_LINK_TOKEN_PATTERN = re.compile(r"\[\[(?:PARTNER|APK)\d+\]\]")
 
 ALL_BUTTON_LINKS = [
     (BUTTON1_TEXT, BUTTON1_URL),
@@ -796,6 +797,89 @@ def apply_promocode_rule(text, chat_id=None):
     return f"{text}\n\n{promocode_text}"
 
 
+def escape_and_bold_numbers(text):
+    escaped = escape(text or "")
+    return re.sub(r"(?<![\w>])(\d+(?:[.,:/-]\d+)*)", r"<b>\1</b>", escaped)
+
+
+def has_letter_content(text):
+    return bool(re.search(r"[A-Za-z\u0600-\u06FF\u0400-\u04FF]", text or ""))
+
+
+def build_vs_line_html(line):
+    match = re.match(r"^(?P<left>.+?)\s+(?P<sep>(?:VS|Vs|vs|V|v))\s+(?P<right>.+)$", (line or "").strip())
+    if not match:
+        return None
+
+    left = match.group("left").strip()
+    right = match.group("right").strip()
+    sep = match.group("sep")
+    if not has_letter_content(left) or not has_letter_content(right):
+        return None
+    if SOURCE_LINK_PATTERN.search(left) or SOURCE_LINK_PATTERN.search(right):
+        return None
+
+    return f"<b>{escape(left)}</b> {escape(sep)} <b>{escape(right)}</b>"
+
+
+def build_score_line_html(line):
+    match = re.match(r"^(?P<left>.+?)\s+(?P<score>\d+(?:\s*[:\-]\s*\d+)+)\s+(?P<right>.+)$", (line or "").strip())
+    if not match:
+        return None
+
+    left = match.group("left").strip()
+    score = match.group("score").strip()
+    right = match.group("right").strip()
+    if not has_letter_content(left) or not has_letter_content(right):
+        return None
+    if SOURCE_LINK_PATTERN.search(left) or SOURCE_LINK_PATTERN.search(right):
+        return None
+
+    return f"<b>{escape(left)}</b> <b>{escape(score)}</b> <b>{escape(right)}</b>"
+
+
+def render_text_segment_html(segment):
+    if not segment:
+        return ""
+
+    rendered_parts = []
+    last_index = 0
+
+    for match in INLINE_LINK_TOKEN_PATTERN.finditer(segment):
+        if match.start() > last_index:
+            rendered_parts.append(escape_and_bold_numbers(segment[last_index:match.start()]))
+        rendered_parts.append(escape(match.group(0)))
+        last_index = match.end()
+
+    if last_index < len(segment):
+        rendered_parts.append(escape_and_bold_numbers(segment[last_index:]))
+
+    return "".join(rendered_parts)
+
+
+def render_line_html(line, chat_id=None):
+    raw_line = line or ""
+    if is_promocode_only_line(raw_line):
+        return f"<b>{escape(raw_line)}</b>"
+
+    special_line = build_score_line_html(raw_line) or build_vs_line_html(raw_line)
+    if special_line:
+        return special_line
+
+    rendered_parts = []
+    last_index = 0
+    for match in SOURCE_LINK_PATTERN.finditer(raw_line):
+        if match.start() > last_index:
+            rendered_parts.append(render_text_segment_html(raw_line[last_index:match.start()]))
+        rendered_parts.append(f"<b>{escape(match.group(0))}</b>")
+        last_index = match.end()
+
+    if last_index < len(raw_line):
+        rendered_parts.append(render_text_segment_html(raw_line[last_index:]))
+
+    return "".join(rendered_parts) if rendered_parts else render_text_segment_html(raw_line)
+
+
 def prepare_telegram_text(text, limit=None, chat_id=None):
     text = text if text else "[Ð±ÐµÐ· Ñ‚ÐµÐºÑÑ‚Ð°]"
     if limit:
@@ -803,11 +887,7 @@ def prepare_telegram_text(text, limit=None, chat_id=None):
 
     safe_lines = []
     for raw_line in text.splitlines():
-        line = raw_line or ""
-        escaped_line = escape(line)
-        if is_promocode_only_line(line):
-            escaped_line = f"<b>{escaped_line}</b>"
-        safe_lines.append(escaped_line)
+        safe_lines.append(render_line_html(raw_line or "", chat_id=chat_id))
 
     safe_text = "\n".join(safe_lines)
     apk_link = f'<a href="{escape(APK_URL, quote=True)}">APK</a>'
