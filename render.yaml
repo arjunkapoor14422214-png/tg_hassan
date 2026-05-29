@@ -18,18 +18,24 @@ services:
         sync: false
       - key: TARGET_CHANNELS
         sync: false
+      - key: ROUTE_1_SKIP_TO_LATEST_ONCE
+        value: "false"
       - key: SOURCE_CHANNEL_2
         sync: false
       - key: TARGET_CHANNEL_2
         sync: false
       - key: TARGET_CHANNELS_2
         sync: false
+      - key: ROUTE_2_SKIP_TO_LATEST_ONCE
+        value: "false"
       - key: SOURCE_CHANNEL_3
         sync: false
       - key: TARGET_CHANNEL_3
         sync: false
       - key: TARGET_CHANNELS_3
         sync: false
+      - key: ROUTE_3_SKIP_TO_LATEST_ONCE
+        value: "false"
       - key: REVIEW_CHANNEL_ID
         value: ""
       - key: SOURCE_CHANNEL

@@ -55,6 +55,12 @@ def route_backfill_latest_once_enabled(route_id):
     return env_flag(f"{route_env_prefix(route_id)}_BACKFILL_LATEST_ONCE", False)
 
 
+def route_skip_to_latest_once_enabled(route_id):
+    if not route_id:
+        return False
+    return env_flag(f"{route_env_prefix(route_id)}_SKIP_TO_LATEST_ONCE", False)
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -1883,6 +1889,10 @@ def should_skip_post(messages):
 
     has_text = any(get_message_text(message).strip() for message in post_messages)
     has_supported_media = count_supported_media(post_messages) > 0
+    if has_text and not has_supported_media:
+        print("Skip reason: text-only post")
+        return True
+
     if not has_supported_media and not has_text:
         print("Skip reason: no supported content")
         return True
@@ -2499,10 +2509,10 @@ async def process_route(client, route, state):
     route_id = route["id"]
     route_state = get_route_state(state, route_id)
     entity = await resolve_source_entity(client, route["source_entity"])
+    current_source_signature = get_source_signature(route["source_channel"], entity)
 
     if not route_state.get("initialized"):
         first_post_key = await get_latest_post_key(client, entity)
-        current_source_signature = get_source_signature(route["source_channel"], entity)
 
         if not first_post_key:
             print(f"[{route_id}] No messages in source channel")
@@ -2528,6 +2538,15 @@ async def process_route(client, route, state):
 
         route_state["initialized"] = True
         save_state(state)
+
+    if route_skip_to_latest_once_enabled(route_id) and not route_state.get("skip_to_latest_once_completed"):
+        latest_post_key = await get_latest_post_key(client, entity)
+        route_state["last_post_key"] = latest_post_key
+        route_state["source_signature"] = current_source_signature
+        route_state["skip_to_latest_once_completed"] = True
+        save_state(state)
+        print(f"[{route_id}] Skip-to-latest completed at:", safe_console_text(latest_post_key))
+        return
 
     if route_backfill_latest_once_enabled(route_id) and not route_state.get("latest_backfill_once_completed"):
         latest_posts = await get_new_posts_data(client, entity, last_post_key=None, limit=1)
