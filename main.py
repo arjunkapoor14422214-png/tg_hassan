@@ -7,9 +7,11 @@ import re
 import sys
 import time
 import requests
+from datetime import datetime
 from html import escape
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 load_dotenv()
 
@@ -79,6 +81,22 @@ def route_min_source_message_id(route_id):
     return int(value)
 
 
+def route_daily_post_limit(route_id):
+    if route_id:
+        scoped_value = (os.getenv(f"{route_env_prefix(route_id)}_DAILY_POST_LIMIT") or "").strip()
+        if scoped_value.isdigit():
+            return max(0, int(scoped_value))
+
+    value = (os.getenv("DAILY_POST_LIMIT") or "5").strip()
+    if value.isdigit():
+        return max(0, int(value))
+    return 5
+
+
+def route_daily_limit_timezone():
+    return (os.getenv("DAILY_LIMIT_TIMEZONE") or "Europe/Warsaw").strip() or "Europe/Warsaw"
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -141,6 +159,10 @@ ALBUM_CHANNEL_URL = os.getenv("ALBUM_CHANNEL_URL", "https://t.me/PLATINUM_APK").
 BONUS_BUTTON_MESSAGE = os.getenv("BONUS_BUTTON_MESSAGE", "Bonusni oling").strip() or "Bonusni oling"
 REVIEW_MODE = MODERATION_ENABLED and bool(REVIEW_CHANNEL_ID)
 PROCESS_BOOT_ID = str(int(time.time()))
+try:
+    DAILY_LIMIT_TZ = ZoneInfo(route_daily_limit_timezone())
+except ZoneInfoNotFoundError:
+    DAILY_LIMIT_TZ = datetime.now().astimezone().tzinfo
 
 TEXT_LINK_TOKENS = [
     ("[[APK1]]", "LuckyPari APK", LUCKYPARI_APK_URL),
@@ -1576,6 +1598,77 @@ def set_route_min_source_message_id(state, route_id, message_id):
     route_state["min_source_message_id"] = int(message_id)
 
 
+def get_current_day_key():
+    return datetime.now(DAILY_LIMIT_TZ).date().isoformat()
+
+
+def get_route_daily_counts(state, route_id):
+    route_state = get_route_state(state, route_id)
+    counts = route_state.get("daily_publish_counts")
+    if isinstance(counts, dict):
+        return counts
+
+    counts = {}
+    route_state["daily_publish_counts"] = counts
+    return counts
+
+
+def get_route_daily_count(state, route_id, chat_id):
+    counts = get_route_daily_counts(state, route_id)
+    value = counts.get(str(chat_id), 0)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 0
+
+
+def increment_route_daily_count(state, route_id, chat_id):
+    counts = get_route_daily_counts(state, route_id)
+    key = str(chat_id)
+    counts[key] = get_route_daily_count(state, route_id, chat_id) + 1
+
+
+def route_target_limit_reached(state, route_id, chat_id):
+    limit = route_daily_post_limit(route_id)
+    if limit <= 0:
+        return True
+    return get_route_daily_count(state, route_id, chat_id) >= limit
+
+
+def route_all_targets_limit_reached(state, route_id, target_channels):
+    targets = [chat_id for chat_id in (target_channels or []) if str(chat_id).strip()]
+    if not targets:
+        return False
+    return all(route_target_limit_reached(state, route_id, chat_id) for chat_id in targets)
+
+
+async def sync_route_daily_window(client, route, state, entity, current_source_signature):
+    route_id = route["id"]
+    route_state = get_route_state(state, route_id)
+    current_day_key = get_current_day_key()
+    previous_day_key = route_state.get("daily_limit_day")
+    if previous_day_key == current_day_key:
+        return False
+
+    route_state["daily_limit_day"] = current_day_key
+    route_state["daily_publish_counts"] = {}
+
+    if previous_day_key:
+        latest_post_key = await get_latest_post_key(client, entity)
+        latest_source_message_id = await get_latest_source_message_id(client, entity)
+        if latest_post_key and latest_source_message_id:
+            route_state["last_post_key"] = latest_post_key
+            route_state["source_signature"] = current_source_signature
+            set_route_min_source_message_id(state, route_id, latest_source_message_id)
+            save_state(state)
+            print(f"[{route_id}] Daily limit reset: backlog skipped at:", safe_console_text(latest_post_key))
+            return True
+
+    save_state(state)
+    return False
+
+
 def migrate_legacy_state(state):
     if state.get("routes"):
         return state
@@ -2358,6 +2451,13 @@ def publish_post(post_data, use_ai=True, state=None):
             print("Skipping target already sent:", safe_console_text(chat_id))
             continue
 
+        if state is not None and route_target_limit_reached(state, route_id, chat_id):
+            print("Skipping target daily limit reached:", safe_console_text(chat_id))
+            if post_key:
+                mark_target_sent(state, route_id, post_key, chat_id)
+                save_state(state)
+            continue
+
         prepared_post = dict(post_data)
         prepared_post["processed_text"] = build_final_text(prepared_post, use_ai=use_ai, chat_id=chat_id)
         reply_to_message_id = None
@@ -2383,6 +2483,7 @@ def publish_post(post_data, use_ai=True, state=None):
         if state is not None and post_key:
             store_target_message_mapping(state, route_id, chat_id, source_message_refs, target_message_id)
             mark_target_sent(state, route_id, post_key, chat_id)
+            increment_route_daily_count(state, route_id, chat_id)
             save_state(state)
 
     if state is not None and post_key:
@@ -2560,6 +2661,7 @@ async def handle_moderation_updates(client, entity, state):
 async def process_route(client, route, state):
     route_id = route["id"]
     route_state = get_route_state(state, route_id)
+    target_channels = route.get("target_channels") or []
     entity = await resolve_source_entity(client, route["source_entity"])
     current_source_signature = get_source_signature(route["source_channel"], entity)
 
@@ -2592,6 +2694,9 @@ async def process_route(client, route, state):
         save_state(state)
 
     startup_min_source_message_id = get_route_min_source_message_id(state, route_id)
+    if await sync_route_daily_window(client, route, state, entity, current_source_signature):
+        return
+
     if route_startup_skip_backlog_enabled(route_id) and route_state.get("startup_guard_id") != PROCESS_BOOT_ID:
         latest_post_key = await get_latest_post_key(client, entity)
         latest_source_message_id = await get_latest_source_message_id(client, entity)
@@ -2647,6 +2752,17 @@ async def process_route(client, route, state):
                 print(f"[{route_id}] Backfill latest once failed")
                 return
 
+    if route_all_targets_limit_reached(state, route_id, target_channels):
+        latest_post_key = await get_latest_post_key(client, entity)
+        latest_source_message_id = await get_latest_source_message_id(client, entity)
+        if latest_post_key and latest_source_message_id:
+            route_state["last_post_key"] = latest_post_key
+            route_state["source_signature"] = current_source_signature
+            set_route_min_source_message_id(state, route_id, latest_source_message_id)
+            save_state(state)
+            print(f"[{route_id}] Daily post limit reached for all targets; waiting for next day after:", safe_console_text(latest_post_key))
+        return
+
     print(f"[{route_id}] SOURCE_CHANNEL:", safe_console_text(route["source_channel"]))
     print(f"[{route_id}] Source found:", safe_console_text(getattr(entity, "title", "no title")))
     print(
@@ -2669,11 +2785,22 @@ async def process_route(client, route, state):
         return
 
     for post_data in new_posts:
+        if route_all_targets_limit_reached(state, route_id, target_channels):
+            latest_post_key = await get_latest_post_key(client, entity)
+            latest_source_message_id = await get_latest_source_message_id(client, entity)
+            if latest_post_key and latest_source_message_id:
+                route_state["last_post_key"] = latest_post_key
+                route_state["source_signature"] = current_source_signature
+                set_route_min_source_message_id(state, route_id, latest_source_message_id)
+                save_state(state)
+                print(f"[{route_id}] Daily post limit reached mid-batch; backlog skipped at:", safe_console_text(latest_post_key))
+            return
+
         print(f"[{route_id}] Processing post: {post_data['key']}")
         prepared_post = dict(post_data)
         prepared_post["route_id"] = route_id
         prepared_post["source_channel"] = route["source_channel"]
-        prepared_post["target_channels"] = route["target_channels"]
+        prepared_post["target_channels"] = target_channels
 
         if REVIEW_MODE:
             print(f"[{route_id}] Route: review channel")
