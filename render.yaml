@@ -18,6 +18,8 @@ services:
         sync: false
       - key: TARGET_CHANNELS
         sync: false
+      - key: SKIP_BACKLOG_ON_STARTUP
+        value: "true"
       - key: ROUTE_1_SKIP_TO_LATEST_ONCE
         value: "false"
       - key: SOURCE_CHANNEL_2

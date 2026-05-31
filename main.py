@@ -61,6 +61,24 @@ def route_skip_to_latest_once_enabled(route_id):
     return env_flag(f"{route_env_prefix(route_id)}_SKIP_TO_LATEST_ONCE", False)
 
 
+def route_startup_skip_backlog_enabled(route_id):
+    if route_id:
+        scoped_value = os.getenv(f"{route_env_prefix(route_id)}_SKIP_BACKLOG_ON_STARTUP")
+        if scoped_value is not None:
+            return scoped_value.strip().lower() in {"1", "true", "yes", "on"}
+    return env_flag("SKIP_BACKLOG_ON_STARTUP", True)
+
+
+def route_min_source_message_id(route_id):
+    if not route_id:
+        return None
+
+    value = (os.getenv(f"{route_env_prefix(route_id)}_MIN_SOURCE_MESSAGE_ID") or "").strip()
+    if not value or not value.isdigit():
+        return None
+    return int(value)
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -122,6 +140,7 @@ LINEBET_APK_URL = os.getenv("LINEBET_APK_URL", "https://lb-aff.com/L?tag=d_54452
 ALBUM_CHANNEL_URL = os.getenv("ALBUM_CHANNEL_URL", "https://t.me/PLATINUM_APK").strip() or "https://t.me/PLATINUM_APK"
 BONUS_BUTTON_MESSAGE = os.getenv("BONUS_BUTTON_MESSAGE", "Bonusni oling").strip() or "Bonusni oling"
 REVIEW_MODE = MODERATION_ENABLED and bool(REVIEW_CHANNEL_ID)
+PROCESS_BOOT_ID = str(int(time.time()))
 
 TEXT_LINK_TOKENS = [
     ("[[APK1]]", "LuckyPari APK", LUCKYPARI_APK_URL),
@@ -1534,6 +1553,29 @@ def get_route_state(state, route_id):
     return route_state
 
 
+def get_route_min_source_message_id(state, route_id):
+    route_state = get_route_state(state, route_id)
+    stored_value = route_state.get("min_source_message_id")
+    if isinstance(stored_value, int):
+        return stored_value
+    if isinstance(stored_value, str) and stored_value.isdigit():
+        return int(stored_value)
+
+    env_value = route_min_source_message_id(route_id)
+    if isinstance(env_value, int):
+        route_state["min_source_message_id"] = env_value
+        return env_value
+
+    return None
+
+
+def set_route_min_source_message_id(state, route_id, message_id):
+    if state is None or not route_id or not message_id:
+        return
+    route_state = get_route_state(state, route_id)
+    route_state["min_source_message_id"] = int(message_id)
+
+
 def migrate_legacy_state(state):
     if state.get("routes"):
         return state
@@ -1938,6 +1980,13 @@ async def get_latest_post_key(client, entity):
     return get_post_key(messages[0])
 
 
+async def get_latest_source_message_id(client, entity):
+    messages = await client.get_messages(entity, limit=1)
+    if not messages:
+        return None
+    return int(messages[0].id)
+
+
 async def ensure_client_connected(client):
     if client.is_connected():
         return True
@@ -2137,7 +2186,7 @@ async def build_post_data_from_messages(client, messages):
     }
 
 
-async def get_new_posts_data(client, entity, last_post_key=None, limit=50):
+async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_source_message_id=None):
     messages = await client.get_messages(entity, limit=limit)
 
     if not messages:
@@ -2164,7 +2213,10 @@ async def get_new_posts_data(client, entity, last_post_key=None, limit=50):
     posts = []
     for post_key in new_keys:
         post_data = await build_post_data_from_messages(client, grouped_messages[post_key])
-        if post_data:
+        if post_data and (
+            not min_source_message_id
+            or int(post_data.get("source_message_id") or 0) > int(min_source_message_id)
+        ):
             posts.append(post_data)
 
     posts.sort(key=lambda post: post.get("source_message_id", 0))
@@ -2539,10 +2591,28 @@ async def process_route(client, route, state):
         route_state["initialized"] = True
         save_state(state)
 
+    startup_min_source_message_id = get_route_min_source_message_id(state, route_id)
+    if route_startup_skip_backlog_enabled(route_id) and route_state.get("startup_guard_id") != PROCESS_BOOT_ID:
+        latest_post_key = await get_latest_post_key(client, entity)
+        latest_source_message_id = await get_latest_source_message_id(client, entity)
+        if latest_post_key and latest_source_message_id:
+            if startup_min_source_message_id:
+                latest_source_message_id = max(int(startup_min_source_message_id), int(latest_source_message_id))
+            route_state["last_post_key"] = latest_post_key
+            route_state["source_signature"] = current_source_signature
+            route_state["startup_guard_id"] = PROCESS_BOOT_ID
+            set_route_min_source_message_id(state, route_id, latest_source_message_id)
+            save_state(state)
+            print(f"[{route_id}] Startup backlog skipped at:", safe_console_text(latest_post_key))
+            return
+
     if route_skip_to_latest_once_enabled(route_id) and not route_state.get("skip_to_latest_once_completed"):
         latest_post_key = await get_latest_post_key(client, entity)
         route_state["last_post_key"] = latest_post_key
         route_state["source_signature"] = current_source_signature
+        latest_source_message_id = await get_latest_source_message_id(client, entity)
+        if latest_source_message_id:
+            set_route_min_source_message_id(state, route_id, latest_source_message_id)
         route_state["skip_to_latest_once_completed"] = True
         save_state(state)
         print(f"[{route_id}] Skip-to-latest completed at:", safe_console_text(latest_post_key))
@@ -2589,6 +2659,7 @@ async def process_route(client, route, state):
         entity,
         route_state.get("last_post_key"),
         limit=NEW_POST_SCAN_LIMIT,
+        min_source_message_id=get_route_min_source_message_id(state, route_id),
     )
     print(f"[{route_id}] New posts found:", len(new_posts))
     print(f"[{route_id}] State key:", route_state.get("last_post_key"))
