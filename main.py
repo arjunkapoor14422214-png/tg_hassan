@@ -15,6 +15,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 load_dotenv()
 
+
+class AIHoldError(RuntimeError):
+    pass
+
 def parse_telegram_peer(value):
     value = (value or "").strip()
     if re.fullmatch(r"-?\d+", value):
@@ -1255,11 +1259,10 @@ def process_text_with_ai(text):
         return text
 
     if not AI_ENABLED:
-        return text
+        raise AIHoldError("AI is disabled")
 
     if not AI_API_KEY:
-        print("AI Ð²Ñ‹ÐºÐ»ÑŽÑ‡ÐµÐ½: Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½ AI_API_KEY, Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÑŽ Ð¸ÑÑ…Ð¾Ð´Ð½Ñ‹Ð¹ Ñ‚ÐµÐºÑÑ‚")
-        return text
+        raise AIHoldError("AI_API_KEY is missing")
 
     user_prompt = text
     if AI_TARGET_LANG:
@@ -1312,8 +1315,7 @@ def process_text_with_ai(text):
         data = response.json()
 
         if response.status_code != 200:
-            print("AI Ð¾ÑˆÐ¸Ð±ÐºÐ°:", response.status_code, data)
-            return text
+            raise AIHoldError(f"OpenAI responded with status {response.status_code}: {safe_console_text(str(data))}")
 
         ai_text = (
             data.get("choices", [{}])[0]
@@ -1324,15 +1326,15 @@ def process_text_with_ai(text):
         ai_text = normalize_ai_text(ai_text)
 
         if not ai_text:
-            print("AI Ð²ÐµÑ€Ð½ÑƒÐ» Ð¿ÑƒÑÑ‚Ð¾Ð¹ Ñ‚ÐµÐºÑÑ‚, Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÑŽ Ð¸ÑÑ…Ð¾Ð´Ð½Ñ‹Ð¹")
-            return text
+            raise AIHoldError("OpenAI returned empty text")
 
         print("AI Ñ‚ÐµÐºÑÑ‚ Ð¿Ð¾Ð´Ð³Ð¾Ñ‚Ð¾Ð²Ð»ÐµÐ½")
         return ai_text
 
+    except AIHoldError:
+        raise
     except Exception as e:
-        print("AI Ð¾ÑˆÐ¸Ð±ÐºÐ°:", str(e))
-        return text
+        raise AIHoldError(str(e))
 
 
 def build_final_text(post_data, use_ai=True, chat_id=None):
@@ -2902,6 +2904,8 @@ async def main():
                 for route in ROUTES:
                     await process_route(client, route, state)
 
+            except AIHoldError as e:
+                print("AI hold mode:", str(e))
             except Exception as e:
                 print("Loop error:", str(e))
 
