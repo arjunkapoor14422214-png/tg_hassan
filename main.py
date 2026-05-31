@@ -1954,6 +1954,9 @@ def get_poll_data(message):
 
 
 def has_video_media(message):
+    if is_unsupported_document_media(message):
+        return False
+
     if getattr(message, "video", None):
         return True
 
@@ -1964,6 +1967,9 @@ def has_video_media(message):
 
 
 def has_downloadable_image(message):
+    if is_unsupported_document_media(message):
+        return False
+
     if getattr(message, "photo", None):
         return True
 
@@ -1981,7 +1987,36 @@ def get_supported_media_type(message):
     return None
 
 
+def is_unsupported_document_media(message):
+    if getattr(message, "sticker", None):
+        return True
+
+    media = getattr(message, "media", None)
+    document = getattr(media, "document", None)
+    if not document:
+        return False
+
+    attributes = getattr(document, "attributes", []) or []
+    for attribute in attributes:
+        attribute_name = attribute.__class__.__name__
+        if attribute_name == "DocumentAttributeSticker":
+            return True
+
+        file_name = (getattr(attribute, "file_name", "") or "").strip().lower()
+        if file_name.endswith(".webm") and "sticker" in file_name:
+            return True
+
+    mime_type = (getattr(document, "mime_type", "") or "").strip().lower()
+    if mime_type == "video/webm":
+        return True
+
+    return False
+
+
 def has_file_media(message):
+    if is_unsupported_document_media(message):
+        return True
+
     media = getattr(message, "media", None)
     document = getattr(media, "document", None)
     if not document:
