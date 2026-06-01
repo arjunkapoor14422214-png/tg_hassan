@@ -2159,12 +2159,38 @@ async def download_media_with_retries(client, message, file="data/"):
     return None
 
 
-async def get_recent_messages_resilient(client, entity, limit=50):
+async def get_recent_messages_resilient(client, entity, limit=50, anchor_message_id=None):
     try:
         messages = await client.get_messages(entity, limit=limit)
         return [message for message in (messages or []) if message]
     except Exception as e:
         print("Bulk source fetch failed, switching to resilient mode:", safe_console_text(str(e)))
+
+    if anchor_message_id:
+        messages = []
+        upper_bound = int(anchor_message_id) + max(limit * 5, 50)
+        for message_id in range(int(anchor_message_id) + 1, upper_bound + 1):
+            try:
+                message = await client.get_messages(entity, ids=message_id)
+            except Exception as e:
+                print(
+                    "Skipping unreadable source message:",
+                    safe_console_text(message_id),
+                    safe_console_text(str(e)),
+                )
+                continue
+
+            if isinstance(message, list):
+                message = next((item for item in message if item), None)
+
+            if not message:
+                continue
+
+            messages.append(message)
+
+        if messages:
+            messages.sort(key=lambda item: getattr(item, "id", 0), reverse=True)
+            return messages[:limit]
 
     latest_messages = await client.get_messages(entity, limit=1)
     if not latest_messages:
@@ -2359,7 +2385,21 @@ async def build_post_data_from_messages(client, messages):
 
 
 async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_source_message_id=None):
-    messages = await get_recent_messages_resilient(client, entity, limit=limit)
+    anchor_message_id = None
+    if last_post_key and last_post_key.startswith("msg_"):
+        suffix = last_post_key[4:]
+        if suffix.isdigit():
+            anchor_message_id = int(suffix)
+
+    if min_source_message_id:
+        anchor_message_id = max(int(min_source_message_id), int(anchor_message_id or 0))
+
+    messages = await get_recent_messages_resilient(
+        client,
+        entity,
+        limit=limit,
+        anchor_message_id=anchor_message_id,
+    )
 
     if not messages:
         return []
