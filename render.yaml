@@ -21,7 +21,7 @@ services:
       - key: SKIP_BACKLOG_ON_STARTUP
         value: "true"
       - key: DAILY_POST_LIMIT
-        value: "5"
+        value: "10"
       - key: DAILY_LIMIT_TIMEZONE
         value: "Europe/Warsaw"
       - key: ROUTE_1_SKIP_TO_LATEST_ONCE

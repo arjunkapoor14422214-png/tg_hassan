@@ -89,12 +89,12 @@ def route_daily_post_limit(route_id):
     if route_id:
         scoped_value = (os.getenv(f"{route_env_prefix(route_id)}_DAILY_POST_LIMIT") or "").strip()
         if scoped_value.isdigit():
-            return max(0, int(scoped_value))
+            return max(10, int(scoped_value))
 
-    value = (os.getenv("DAILY_POST_LIMIT") or "5").strip()
+    value = (os.getenv("DAILY_POST_LIMIT") or "10").strip()
     if value.isdigit():
-        return max(0, int(value))
-    return 5
+        return max(10, int(value))
+    return 10
 
 
 def route_daily_limit_timezone():
