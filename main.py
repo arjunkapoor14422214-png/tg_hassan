@@ -101,6 +101,20 @@ def route_daily_limit_timezone():
     return (os.getenv("DAILY_LIMIT_TIMEZONE") or "Europe/Warsaw").strip() or "Europe/Warsaw"
 
 
+def target_album_buttons_enabled(chat_id):
+    normalized_channel_id = normalize_telegram_channel_id(chat_id)
+    if normalized_channel_id is not None:
+        scoped_value = os.getenv(f"TARGET_ALBUM_BUTTONS_{normalized_channel_id}")
+        if scoped_value is not None:
+            return scoped_value.strip().lower() in {"1", "true", "yes", "on"}
+
+    value = os.getenv("ALBUM_BUTTONS_ENABLED")
+    if value is not None:
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    return True
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -2542,7 +2556,7 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
         message_ids = get_response_message_ids(response)
         target_message_id = message_ids[0] if message_ids else None
 
-        if not with_buttons:
+        if not with_buttons or not target_album_buttons_enabled(chat_id):
             return target_message_id
 
         buttons_response = send_text("ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", with_buttons=True, chat_id=chat_id)
