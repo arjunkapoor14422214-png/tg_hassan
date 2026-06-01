@@ -2159,6 +2159,48 @@ async def download_media_with_retries(client, message, file="data/"):
     return None
 
 
+async def get_recent_messages_resilient(client, entity, limit=50):
+    try:
+        messages = await client.get_messages(entity, limit=limit)
+        return [message for message in (messages or []) if message]
+    except Exception as e:
+        print("Bulk source fetch failed, switching to resilient mode:", safe_console_text(str(e)))
+
+    latest_messages = await client.get_messages(entity, limit=1)
+    if not latest_messages:
+        return []
+
+    latest_message = latest_messages[0] if isinstance(latest_messages, list) else latest_messages
+    latest_id = getattr(latest_message, "id", None)
+    if not latest_id:
+        return []
+
+    messages = []
+    floor_id = max(1, int(latest_id) - max(limit * 3, limit))
+    for message_id in range(int(latest_id), floor_id - 1, -1):
+        try:
+            message = await client.get_messages(entity, ids=message_id)
+        except Exception as e:
+            print(
+                "Skipping unreadable source message:",
+                safe_console_text(message_id),
+                safe_console_text(str(e)),
+            )
+            continue
+
+        if isinstance(message, list):
+            message = next((item for item in message if item), None)
+
+        if not message:
+            continue
+
+        messages.append(message)
+        if len(messages) >= limit:
+            break
+
+    return messages
+
+
 async def rebuild_post_media(client, entity, post_data):
     expected_media_count = int(post_data.get("media_count") or 0)
     media_items = post_data.get("media_items")
@@ -2317,7 +2359,7 @@ async def build_post_data_from_messages(client, messages):
 
 
 async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_source_message_id=None):
-    messages = await client.get_messages(entity, limit=limit)
+    messages = await get_recent_messages_resilient(client, entity, limit=limit)
 
     if not messages:
         return []
