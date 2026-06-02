@@ -115,6 +115,10 @@ def target_album_buttons_enabled(chat_id):
     return True
 
 
+def text_only_posts_allowed():
+    return env_flag("ALLOW_TEXT_ONLY_POSTS", False)
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -2075,7 +2079,7 @@ def should_skip_post(messages):
 
     has_text = any(get_message_text(message).strip() for message in post_messages)
     has_supported_media = count_supported_media(post_messages) > 0
-    if has_text and not has_supported_media:
+    if has_text and not has_supported_media and not text_only_posts_allowed():
         print("Skip reason: text-only post")
         return True
 

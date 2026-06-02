@@ -24,6 +24,8 @@ services:
         value: "10"
       - key: DAILY_LIMIT_TIMEZONE
         value: "Europe/Warsaw"
+      - key: ALLOW_TEXT_ONLY_POSTS
+        value: "false"
       - key: TARGET_ALBUM_BUTTONS_1003798871790
         value: "false"
       - key: ROUTE_1_SKIP_TO_LATEST_ONCE
