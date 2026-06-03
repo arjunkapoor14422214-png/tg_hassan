@@ -1272,21 +1272,30 @@ def normalize_ai_text(text):
     return body
 
 
-def process_text_with_ai(text):
-    if not text:
-        return text
+NUMBER_TOKEN_PATTERN = re.compile(r"\d+(?:[.,:/-]\d+)*(?:\s*[%$€£₺])?")
 
-    if not AI_ENABLED:
-        raise AIHoldError("AI is disabled")
 
-    if not AI_API_KEY:
-        raise AIHoldError("AI_API_KEY is missing")
+def extract_number_tokens(text):
+    return [match.group(0).strip() for match in NUMBER_TOKEN_PATTERN.finditer(text or "")]
 
-    user_prompt = text
-    if AI_TARGET_LANG:
-        user_prompt = f"Target language: {AI_TARGET_LANG}\n\n{text}"
 
-    system_prompt = (
+def output_uses_supported_numbers(source_text, output_text):
+    source_numbers = extract_number_tokens(source_text)
+    output_numbers = extract_number_tokens(output_text)
+
+    if not source_numbers:
+        return not output_numbers
+
+    normalized_source_numbers = {re.sub(r"\s+", "", token) for token in source_numbers}
+    for token in output_numbers:
+        normalized_token = re.sub(r"\s+", "", token)
+        if normalized_token not in normalized_source_numbers:
+            return False
+    return True
+
+
+def build_ai_system_prompt(strict_numbers=False):
+    prompt = (
         f"{AI_STYLE_PROMPT}\n\n"
         "Write only the final Telegram post body. "
         "Output in the requested target language when it is provided. "
@@ -1308,11 +1317,21 @@ def process_text_with_ai(text):
         "Do not add footer links or button labels. "
         "Return only the rewritten body."
     )
+    if strict_numbers:
+        prompt += (
+            " Preserve numeric meaning exactly. "
+            "Use only numbers, dates, percentages, odds, scores, money amounts, and promo values that already exist in the source text. "
+            "If the source contains no digits, your answer must contain no digits. "
+            "Never introduce a new number or change an existing one."
+        )
+    return prompt
 
+
+def request_ai_text(user_prompt, strict_numbers=False):
     payload = {
         "model": AI_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": build_ai_system_prompt(strict_numbers=strict_numbers)},
             {"role": "user", "content": user_prompt},
         ],
     }
@@ -1322,29 +1341,53 @@ def process_text_with_ai(text):
         "Content-Type": "application/json",
     }
 
+    response = perform_post_request(
+        "https://api.openai.com/v1/chat/completions",
+        request_name="OpenAI chat completion",
+        headers=headers,
+        json=payload,
+        timeout=90,
+    )
+    data = response.json()
+
+    if response.status_code != 200:
+        raise AIHoldError(f"OpenAI responded with status {response.status_code}: {safe_console_text(str(data))}")
+
+    ai_text = (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+        .strip()
+    )
+    ai_text = normalize_ai_text(ai_text)
+
+    if not ai_text:
+        raise AIHoldError("OpenAI returned empty text")
+
+    return ai_text
+
+
+def process_text_with_ai(text):
+    if not text:
+        return text
+
+    if not AI_ENABLED:
+        raise AIHoldError("AI is disabled")
+
+    if not AI_API_KEY:
+        raise AIHoldError("AI_API_KEY is missing")
+
+    user_prompt = text
+    if AI_TARGET_LANG:
+        user_prompt = f"Target language: {AI_TARGET_LANG}\n\n{text}"
+
     try:
-        response = perform_post_request(
-            "https://api.openai.com/v1/chat/completions",
-            request_name="OpenAI chat completion",
-            headers=headers,
-            json=payload,
-            timeout=90,
-        )
-        data = response.json()
-
-        if response.status_code != 200:
-            raise AIHoldError(f"OpenAI responded with status {response.status_code}: {safe_console_text(str(data))}")
-
-        ai_text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-        ai_text = normalize_ai_text(ai_text)
-
-        if not ai_text:
-            raise AIHoldError("OpenAI returned empty text")
+        ai_text = request_ai_text(user_prompt, strict_numbers=False)
+        if not output_uses_supported_numbers(text, ai_text):
+            print("AI numeric mismatch detected, retrying with strict numeric constraints")
+            ai_text = request_ai_text(user_prompt, strict_numbers=True)
+            if not output_uses_supported_numbers(text, ai_text):
+                raise AIHoldError("AI introduced unsupported numeric values")
 
         print("AI Ñ‚ÐµÐºÑÑ‚ Ð¿Ð¾Ð´Ð³Ð¾Ñ‚Ð¾Ð²Ð»ÐµÐ½")
         return ai_text
