@@ -927,9 +927,39 @@ def inject_cad_signal_line(text):
     return "\n".join(output_lines).strip()
 
 
+def format_custom_signal_blocks(text):
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    blocks = [lines[0]]
+    index = 1
+
+    pre_bet_lines = []
+    while index < len(lines) and "bet:" not in lines[index].lower():
+        pre_bet_lines.append(lines[index])
+        index += 1
+    if pre_bet_lines:
+        blocks.append("\n".join(pre_bet_lines))
+
+    if index < len(lines):
+        bet_block = [lines[index]]
+        index += 1
+        if index < len(lines) and "CAD" in lines[index]:
+            bet_block.append(lines[index])
+            index += 1
+        blocks.append("\n".join(bet_block))
+
+    if index < len(lines):
+        blocks.append("\n".join(lines[index:]))
+
+    return "\n\n".join(block for block in blocks if block.strip()).strip()
+
+
 def build_custom_signal_post(text, chat_id=None):
     body = cleanup_signal_text(text)
     body = inject_cad_signal_line(body)
+    body = format_custom_signal_blocks(body)
     add_inline_link = random.choice([True, False])
     if add_inline_link:
         target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
@@ -948,6 +978,14 @@ def render_custom_signal_text(text):
 
     safe_lines = []
     for raw_line in (text or "").splitlines():
+        stripped_line = (raw_line or "").strip()
+        if stripped_line == (get_target_channel_override(chat_id=None).get("button3_url") or BUTTON3_URL):
+            safe_lines.append(f"<b>{escape(stripped_line)}</b>")
+            continue
+        if "PROMOCODE" in stripped_line.upper():
+            safe_lines.append(f"<b>{escape(stripped_line)}</b>".replace("🎁", "&#127873;"))
+            continue
+
         rendered_parts = []
         last_index = 0
         for match in SOURCE_LINK_PATTERN.finditer(raw_line or ""):
