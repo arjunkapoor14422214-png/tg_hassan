@@ -86,6 +86,8 @@ def route_min_source_message_id(route_id):
 
 
 def route_daily_post_limit(route_id):
+    if env_flag("UNLIMITED_DAILY_POSTS", False):
+        return 0
     if route_id:
         scoped_value = (os.getenv(f"{route_env_prefix(route_id)}_DAILY_POST_LIMIT") or "").strip()
         if scoped_value.isdigit():
@@ -117,6 +119,10 @@ def target_album_buttons_enabled(chat_id):
 
 def text_only_posts_allowed():
     return env_flag("ALLOW_TEXT_ONLY_POSTS", False)
+
+
+def custom_signal_mode_enabled():
+    return env_flag("CUSTOM_SIGNAL_MODE", False)
 
 
 API_ID = os.getenv("TG_API_ID")
@@ -872,6 +878,47 @@ def apply_promocode_rule(text, chat_id=None):
     return f"{text}\n\n{promocode_text}"
 
 
+BET_LINE_PATTERN = re.compile(r"(?im)^(?P<line>.*\bBet:\s*.*)$")
+
+
+def build_random_cad_line():
+    amount = random.randrange(400, 1001, 50)
+    return f"I place {amount} CAD on this match"
+
+
+def cleanup_signal_text(text):
+    cleaned_lines = []
+    for raw_line in (text or "").splitlines():
+        line = SOURCE_LINK_PATTERN.sub("", raw_line).strip()
+        line = re.sub(r"[ ]{2,}", " ", line).strip()
+        if line:
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines).strip()
+
+
+def inject_cad_signal_line(text):
+    inserted = False
+    output_lines = []
+    for line in (text or "").splitlines():
+        output_lines.append(line)
+        if not inserted and re.search(r"\bBet:\b", line, flags=re.IGNORECASE):
+            output_lines.append(build_random_cad_line())
+            inserted = True
+    return "\n".join(output_lines).strip()
+
+
+def build_custom_signal_post(text, chat_id=None):
+    body = cleanup_signal_text(text)
+    body = inject_cad_signal_line(body)
+    add_inline_link = random.choice([True, False])
+    if add_inline_link:
+        target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
+        if target_link:
+            body = f"{body}\n\n{target_link}".strip()
+    body = apply_promocode_rule(body, chat_id=chat_id)
+    return body, add_inline_link
+
+
 def escape_and_bold_numbers(text):
     escaped = escape(text or "")
     return re.sub(r"(?<![\w>])(\d+(?:[.,:/-]\d+)*)", r"<b>\1</b>", escaped)
@@ -959,6 +1006,9 @@ def prepare_telegram_text(text, limit=None, chat_id=None):
     text = text if text else "[Ð±ÐµÐ· Ñ‚ÐµÐºÑÑ‚Ð°]"
     if limit:
         text = text[:limit]
+
+    if custom_signal_mode_enabled():
+        return escape(text)
 
     safe_lines = []
     for raw_line in text.splitlines():
@@ -1400,6 +1450,11 @@ def process_text_with_ai(text):
 
 def build_final_text(post_data, use_ai=True, chat_id=None):
     source_text = post_data.get("text", "")
+    if custom_signal_mode_enabled():
+        custom_text, has_inline_link = build_custom_signal_post(source_text, chat_id=chat_id)
+        post_data["has_inline_custom_link"] = has_inline_link
+        return custom_text
+
     inline_partners = bool(post_data.get("inline_partners"))
     primary_partner_only = bool(post_data.get("primary_partner_only"))
     ai_input = prepare_text_for_ai(source_text, inline_partners=inline_partners, chat_id=chat_id)
@@ -1695,7 +1750,7 @@ def increment_route_daily_count(state, route_id, chat_id):
 def route_target_limit_reached(state, route_id, chat_id):
     limit = route_daily_post_limit(route_id)
     if limit <= 0:
-        return True
+        return False
     return get_route_daily_count(state, route_id, chat_id) >= limit
 
 
@@ -2539,7 +2594,11 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
             for path in (post_data.get("photo_paths") or [])
         ]
 
-    with_buttons = bool(post_data.get("with_buttons")) and not post_contains_inline_partners(text, chat_id=chat_id)
+    with_buttons = (
+        bool(post_data.get("with_buttons"))
+        and not post_contains_inline_partners(text, chat_id=chat_id)
+        and not bool(post_data.get("has_inline_custom_link"))
+    )
 
     if expected_media_count and len(media_items) < expected_media_count:
         print(
