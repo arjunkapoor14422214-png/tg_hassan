@@ -891,6 +891,13 @@ def cleanup_signal_text(text):
     for raw_line in (text or "").splitlines():
         line = SOURCE_LINK_PATTERN.sub("", raw_line).strip()
         line = re.sub(r"[ ]{2,}", " ", line).strip()
+        lowered = line.lower()
+        if (
+            "download app" in lowered
+            or "ios app store" in lowered
+            or "google play" in lowered
+        ):
+            continue
         if line:
             cleaned_lines.append(line)
     return "\n".join(cleaned_lines).strip()
@@ -901,7 +908,7 @@ def inject_cad_signal_line(text):
     output_lines = []
     for line in (text or "").splitlines():
         output_lines.append(line)
-        if not inserted and re.search(r"\bBet:\b", line, flags=re.IGNORECASE):
+        if not inserted and re.search(r"(^|[\s|])bet\s*:", line, flags=re.IGNORECASE):
             output_lines.append(build_random_cad_line())
             inserted = True
     return "\n".join(output_lines).strip()
