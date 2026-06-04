@@ -883,7 +883,7 @@ BET_LINE_PATTERN = re.compile(r"(?im)^(?P<line>.*\bBet:\s*.*)$")
 
 def build_random_cad_line():
     amount = random.randrange(400, 1001, 50)
-    return f"I place {amount} CAD on this match"
+    return f"💰My bet is {amount}CAD on this prediction"
 
 
 def cleanup_signal_text(text):
@@ -2184,7 +2184,7 @@ def should_skip_post(messages):
 
     has_text = any(get_message_text(message).strip() for message in post_messages)
     has_supported_media = count_supported_media(post_messages) > 0
-    if has_text and not has_supported_media and not text_only_posts_allowed():
+    if has_text and not has_supported_media and (custom_signal_mode_enabled() or not text_only_posts_allowed()):
         print("Skip reason: text-only post")
         return True
 
