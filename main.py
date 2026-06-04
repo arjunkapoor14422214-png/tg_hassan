@@ -869,6 +869,8 @@ def build_moderation_markup(post_key):
 def apply_promocode_rule(text, chat_id=None):
     text = normalize_promocode_lines((text or "").strip(), chat_id=chat_id)
     promocode_text = get_target_promocode_text(chat_id)
+    if custom_signal_mode_enabled() and promocode_text:
+        promocode_text = f"🎁 {promocode_text.lstrip('🎁 ').strip()}"
     if not text:
         return promocode_text
 
@@ -883,7 +885,14 @@ BET_LINE_PATTERN = re.compile(r"(?im)^(?P<line>.*\bBet:\s*.*)$")
 
 def build_random_cad_line():
     amount = random.randrange(400, 1001, 50)
-    return f"💰My bet is {amount}CAD on this prediction"
+    template = random.choice(
+        [
+            "💰 I’m backing this prediction with {amount}CAD",
+            "💰 My stake for this pick is {amount}CAD",
+            "💰 I’ve got {amount}CAD on this one",
+        ]
+    )
+    return template.format(amount=amount)
 
 
 def cleanup_signal_text(text):
@@ -927,12 +936,27 @@ def build_custom_signal_post(text, chat_id=None):
 
 
 def render_custom_signal_text(text):
+    def render_signal_segment(segment):
+        escaped_segment = escape(segment or "")
+        escaped_segment = re.sub(r"(\b\d+CAD\b)", r"<b>\1</b>", escaped_segment)
+        escaped_segment = re.sub(r"(?<![\w>])(\d+(?:[.,:/-]\d+)*)", r"<b>\1</b>", escaped_segment)
+        return escaped_segment
+
     safe_lines = []
     for raw_line in (text or "").splitlines():
-        escaped_line = escape(raw_line or "")
-        escaped_line = escaped_line.replace("💰", "&#128176;")
-        escaped_line = re.sub(r"(\b\d+CAD\b)", r"<b>\1</b>", escaped_line)
-        safe_lines.append(escaped_line)
+        rendered_parts = []
+        last_index = 0
+        for match in SOURCE_LINK_PATTERN.finditer(raw_line or ""):
+            if match.start() > last_index:
+                rendered_parts.append(render_signal_segment((raw_line or "")[last_index:match.start()]))
+            rendered_parts.append(escape(match.group(0)))
+            last_index = match.end()
+        if last_index < len(raw_line or ""):
+            rendered_parts.append(render_signal_segment((raw_line or "")[last_index:]))
+
+        rendered_line = "".join(rendered_parts) if rendered_parts else render_signal_segment(raw_line or "")
+        rendered_line = rendered_line.replace("💰", "&#128176;").replace("🎁", "&#127873;")
+        safe_lines.append(rendered_line)
     return "\n".join(safe_lines)
 
 
