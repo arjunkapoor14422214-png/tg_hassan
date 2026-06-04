@@ -926,6 +926,16 @@ def build_custom_signal_post(text, chat_id=None):
     return body, add_inline_link
 
 
+def render_custom_signal_text(text):
+    safe_lines = []
+    for raw_line in (text or "").splitlines():
+        escaped_line = escape(raw_line or "")
+        escaped_line = escaped_line.replace("💰", "&#128176;")
+        escaped_line = re.sub(r"(\b\d+CAD\b)", r"<b>\1</b>", escaped_line)
+        safe_lines.append(escaped_line)
+    return "\n".join(safe_lines)
+
+
 def escape_and_bold_numbers(text):
     escaped = escape(text or "")
     return re.sub(r"(?<![\w>])(\d+(?:[.,:/-]\d+)*)", r"<b>\1</b>", escaped)
@@ -1015,7 +1025,7 @@ def prepare_telegram_text(text, limit=None, chat_id=None):
         text = text[:limit]
 
     if custom_signal_mode_enabled():
-        return escape(text)
+        return render_custom_signal_text(text)
 
     safe_lines = []
     for raw_line in text.splitlines():
