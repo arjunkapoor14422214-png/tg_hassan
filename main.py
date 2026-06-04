@@ -881,15 +881,16 @@ def apply_promocode_rule(text, chat_id=None):
 
 
 BET_LINE_PATTERN = re.compile(r"(?im)^(?P<line>.*\bBet:\s*.*)$")
+SIGNAL_RANDOM = random.SystemRandom()
 
 
 def build_random_cad_line():
-    amount = random.randrange(400, 1001, 50)
-    template = random.choice(
+    amount = SIGNAL_RANDOM.choice(list(range(400, 1001, 50)))
+    template = SIGNAL_RANDOM.choice(
         [
-            "💰 I’m backing this prediction with {amount}CAD",
+            "💰 I'm backing this prediction with {amount}CAD",
             "💰 My stake for this pick is {amount}CAD",
-            "💰 I’ve got {amount}CAD on this one",
+            "💰 I've got {amount}CAD on this one",
         ]
     )
     return template.format(amount=amount)
@@ -905,6 +906,9 @@ def cleanup_signal_text(text):
             "download app" in lowered
             or "ios app store" in lowered
             or "google play" in lowered
+            or "join footballant official chat" in lowered
+            or "follow our bot for all alerts" in lowered
+            or "@football_ant_bot" in lowered
         ):
             continue
         if line:
