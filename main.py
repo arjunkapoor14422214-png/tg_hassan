@@ -1000,7 +1000,14 @@ def build_custom_signal_post(text, chat_id=None):
 def choose_clone_template_image(text):
     body = (text or "").lower()
     template_path = TEMPLATE_IMAGE_LIVE
-    if "goal" in body or "prediction successful" in body or "successful" in body:
+    goal_markers = [
+        "prediction successful",
+        "goal !!!",
+        "goal!!!",
+        "goal !!",
+        "goal successful",
+    ]
+    if any(marker in body for marker in goal_markers):
         template_path = TEMPLATE_IMAGE_GOAL or TEMPLATE_IMAGE_LIVE
     return template_path if template_path and os.path.exists(template_path) else ""
 
