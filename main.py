@@ -1071,7 +1071,7 @@ def rewrite_clone_template_text(text, chat_id=None):
 def render_custom_signal_text(text):
     def render_signal_segment(segment):
         escaped_segment = escape(segment or "")
-        escaped_segment = re.sub(r"(\b\d+CAD\b)", r"<b>\1</b>", escaped_segment)
+        escaped_segment = re.sub(r"(\b\d+(?:[.,]\d+)?\s?(?:CAD|EUR|USD|GBP|BRL|TRY|BDT|INR|AED)\b)", r"<b>\1</b>", escaped_segment)
         escaped_segment = re.sub(r"(?<![\w>])(\d+(?:[.,:/-]\d+)*)", r"<b>\1</b>", escaped_segment)
         return escaped_segment
 
@@ -1103,6 +1103,7 @@ def render_custom_signal_text(text):
 
 def escape_and_bold_numbers(text):
     escaped = escape(text or "")
+    escaped = re.sub(r"(\b\d+(?:[.,]\d+)?\s?(?:CAD|EUR|USD|GBP|BRL|TRY|BDT|INR|AED)\b)", r"<b>\1</b>", escaped)
     return re.sub(r"(?<![\w>])(\d+(?:[.,:/-]\d+)*)", r"<b>\1</b>", escaped)
 
 
