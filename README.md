@@ -34,9 +34,13 @@ Optional:
 
 - `REVIEW_CHANNEL_ID`
 - `AI_API_KEY`
+- `CLONE_TEMPLATE_MEDIA_MODE`
+- `TEMPLATE_IMAGE_LIVE`
+- `TEMPLATE_IMAGE_GOAL`
 
 Notes:
 
 - AI is enabled in config, but it requires a valid `AI_API_KEY`.
 - The source channel can be a username like `@channel_name` or an ID like `-100...`.
 - Runtime state is stored in the local `data/` folder. Without a persistent disk on Render, this state resets after redeploys or restarts.
+- `CLONE_TEMPLATE_MEDIA_MODE=true` keeps the source text nearly unchanged, swaps promo/link to the target values, and replaces source media with local template images.

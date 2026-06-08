@@ -125,6 +125,10 @@ def custom_signal_mode_enabled():
     return env_flag("CUSTOM_SIGNAL_MODE", False)
 
 
+def clone_template_media_mode_enabled():
+    return env_flag("CLONE_TEMPLATE_MEDIA_MODE", False)
+
+
 API_ID = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SOURCE_CHANNEL = (os.getenv("SOURCE_CHANNEL") or "").strip()
@@ -178,6 +182,8 @@ BUTTON3_TEXT = os.getenv("BUTTON3_TEXT", "LUCKYPARI BONUS").strip()
 BUTTON3_URL = os.getenv("BUTTON3_URL", "https://lckypr.com/G4DtDxQ").strip()
 BUTTON4_TEXT = os.getenv("BUTTON4_TEXT", "LINEBET BONUS").strip()
 BUTTON4_URL = os.getenv("BUTTON4_URL", "https://lb-aff.com/L?tag=d_5445297m_22611c_site&site=5445297&ad=22611&r=registration").strip()
+TEMPLATE_IMAGE_LIVE = (os.getenv("TEMPLATE_IMAGE_LIVE") or "").strip()
+TEMPLATE_IMAGE_GOAL = (os.getenv("TEMPLATE_IMAGE_GOAL") or "").strip()
 
 LUCKYPARI_APK_URL = os.getenv("LUCKYPARI_APK_URL", "https://lckypr.com/wW5nH61").strip()
 ULTRAPARI_APK_URL = os.getenv("ULTRAPARI_APK_URL", "https://refpa42156.com/L?tag=d_5299306m_118431c_&site=5299306&ad=118431").strip()
@@ -985,6 +991,45 @@ def build_custom_signal_post(text, chat_id=None):
     return body, add_inline_link
 
 
+def choose_clone_template_image(text):
+    body = (text or "").lower()
+    template_path = TEMPLATE_IMAGE_LIVE
+    if "goal" in body or "prediction successful" in body or "successful" in body:
+        template_path = TEMPLATE_IMAGE_GOAL or TEMPLATE_IMAGE_LIVE
+    return template_path if template_path and os.path.exists(template_path) else ""
+
+
+def rewrite_clone_template_text(text, chat_id=None):
+    body = (text or "").replace("\r\n", "\n").strip()
+    if not body:
+        return apply_promocode_rule("", chat_id=chat_id)
+
+    target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
+    target_promocode = get_target_promocode_text(chat_id)
+
+    rewritten_lines = []
+    saw_promocode = False
+    for raw_line in body.splitlines():
+        line = raw_line or ""
+        if is_promocode_only_line(line):
+            rewritten_lines.append(target_promocode)
+            saw_promocode = True
+            continue
+        if SOURCE_LINK_PATTERN.search(line):
+            rewritten_lines.append(SOURCE_LINK_PATTERN.sub(target_link, line))
+            continue
+        rewritten_lines.append(line)
+
+    body = "\n".join(rewritten_lines).strip()
+    if target_link and target_link not in body and SOURCE_LINK_PATTERN.search(text or ""):
+        body = f"{body}\n\n{target_link}".strip()
+    if not saw_promocode:
+        body = apply_promocode_rule(body, chat_id=chat_id)
+
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body.strip()
+
+
 def render_custom_signal_text(text):
     def render_signal_segment(segment):
         escaped_segment = escape(segment or "")
@@ -1554,6 +1599,9 @@ def build_final_text(post_data, use_ai=True, chat_id=None):
         custom_text, has_inline_link = build_custom_signal_post(source_text, chat_id=chat_id)
         post_data["has_inline_custom_link"] = has_inline_link
         return custom_text
+    if clone_template_media_mode_enabled():
+        post_data["has_inline_custom_link"] = True
+        return rewrite_clone_template_text(source_text, chat_id=chat_id)
 
     inline_partners = bool(post_data.get("inline_partners"))
     primary_partner_only = bool(post_data.get("primary_partner_only"))
@@ -2451,6 +2499,19 @@ async def rebuild_post_media(client, entity, post_data):
             {"type": "photo", "path": path}
             for path in (post_data.get("photo_paths") or [])
         ]
+
+    if clone_template_media_mode_enabled():
+        template_image = choose_clone_template_image(post_data.get("text", ""))
+        if not template_image:
+            raise RuntimeError(
+                f"Clone template media mode is enabled but template image is missing for {post_data.get('key')}"
+            )
+
+        rebuilt_post = dict(post_data)
+        rebuilt_post["media_items"] = [{"type": "photo", "path": template_image}]
+        rebuilt_post["photo_paths"] = []
+        rebuilt_post["media_count"] = 1
+        return rebuilt_post
 
     if expected_media_count <= 0:
         return post_data
