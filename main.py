@@ -1020,6 +1020,12 @@ def clone_stake_line_templates():
     return CLONE_STAKE_TEMPLATES or []
 
 
+def normalize_clone_stake_template(template):
+    body = (template or "").strip()
+    body = re.sub(r"^[^\w{]+", "", body).strip()
+    return body
+
+
 def rewrite_clone_stake_line(line):
     currency = get_clone_target_currency()
     amount_match = re.search(r"(\d+(?:[.,]\d+)?)\s*CAD\b", line or "", flags=re.IGNORECASE)
@@ -1038,8 +1044,8 @@ def rewrite_clone_stake_line(line):
         ]
     )
     if looks_like_stake_line and clone_stake_line_templates():
-        template = SIGNAL_RANDOM.choice(clone_stake_line_templates())
-        return template.format(amount=amount, currency=currency)
+        template = normalize_clone_stake_template(SIGNAL_RANDOM.choice(clone_stake_line_templates()))
+        return f"💰 {template.format(amount=amount, currency=currency)}".strip()
 
     return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
 
