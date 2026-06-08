@@ -184,6 +184,12 @@ BUTTON4_TEXT = os.getenv("BUTTON4_TEXT", "LINEBET BONUS").strip()
 BUTTON4_URL = os.getenv("BUTTON4_URL", "https://lb-aff.com/L?tag=d_5445297m_22611c_site&site=5445297&ad=22611&r=registration").strip()
 TEMPLATE_IMAGE_LIVE = (os.getenv("TEMPLATE_IMAGE_LIVE") or "").strip()
 TEMPLATE_IMAGE_GOAL = (os.getenv("TEMPLATE_IMAGE_GOAL") or "").strip()
+CLONE_TARGET_CURRENCY = (os.getenv("CLONE_TARGET_CURRENCY") or "").strip()
+CLONE_STAKE_TEMPLATES = [
+    template.strip()
+    for template in (os.getenv("CLONE_STAKE_TEMPLATES") or "").split("||")
+    if template.strip()
+]
 
 LUCKYPARI_APK_URL = os.getenv("LUCKYPARI_APK_URL", "https://lckypr.com/wW5nH61").strip()
 ULTRAPARI_APK_URL = os.getenv("ULTRAPARI_APK_URL", "https://refpa42156.com/L?tag=d_5299306m_118431c_&site=5299306&ad=118431").strip()
@@ -999,6 +1005,38 @@ def choose_clone_template_image(text):
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
+def get_clone_target_currency():
+    return CLONE_TARGET_CURRENCY or "CAD"
+
+
+def clone_stake_line_templates():
+    return CLONE_STAKE_TEMPLATES or []
+
+
+def rewrite_clone_stake_line(line):
+    currency = get_clone_target_currency()
+    amount_match = re.search(r"(\d+(?:[.,]\d+)?)\s*CAD\b", line or "", flags=re.IGNORECASE)
+    if not amount_match:
+        return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
+
+    amount = amount_match.group(1)
+    lowered = (line or "").lower()
+    looks_like_stake_line = any(
+        token in lowered
+        for token in [
+            "backing this prediction",
+            "stake for this pick",
+            "got ",
+            "my bet is",
+        ]
+    )
+    if looks_like_stake_line and clone_stake_line_templates():
+        template = SIGNAL_RANDOM.choice(clone_stake_line_templates())
+        return template.format(amount=amount, currency=currency)
+
+    return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
+
+
 def rewrite_clone_template_text(text, chat_id=None):
     body = (text or "").replace("\r\n", "\n").strip()
     if not body:
@@ -1018,7 +1056,7 @@ def rewrite_clone_template_text(text, chat_id=None):
         if SOURCE_LINK_PATTERN.search(line):
             rewritten_lines.append(SOURCE_LINK_PATTERN.sub(target_link, line))
             continue
-        rewritten_lines.append(line)
+        rewritten_lines.append(rewrite_clone_stake_line(line))
 
     body = "\n".join(rewritten_lines).strip()
     if target_link and target_link not in body and SOURCE_LINK_PATTERN.search(text or ""):

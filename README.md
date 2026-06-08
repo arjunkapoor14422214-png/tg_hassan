@@ -37,6 +37,8 @@ Optional:
 - `CLONE_TEMPLATE_MEDIA_MODE`
 - `TEMPLATE_IMAGE_LIVE`
 - `TEMPLATE_IMAGE_GOAL`
+- `CLONE_TARGET_CURRENCY`
+- `CLONE_STAKE_TEMPLATES`
 
 Notes:
 
@@ -44,3 +46,4 @@ Notes:
 - The source channel can be a username like `@channel_name` or an ID like `-100...`.
 - Runtime state is stored in the local `data/` folder. Without a persistent disk on Render, this state resets after redeploys or restarts.
 - `CLONE_TEMPLATE_MEDIA_MODE=true` keeps the source text nearly unchanged, swaps promo/link to the target values, and replaces source media with local template images.
+- `CLONE_TARGET_CURRENCY` and `CLONE_STAKE_TEMPLATES` let clone channels localize the stake line, for example changing `600CAD` into a Portuguese or Italian `EUR` phrase while keeping the same amount.
