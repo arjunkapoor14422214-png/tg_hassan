@@ -999,16 +999,30 @@ def build_custom_signal_post(text, chat_id=None):
 
 def choose_clone_template_image(text):
     body = (text or "").lower()
-    template_path = TEMPLATE_IMAGE_LIVE
-    goal_markers = [
-        "prediction successful",
-        "goal !!!",
-        "goal!!!",
-        "goal !!",
-        "goal successful",
+    live_markers = [
+        "bet:",
+        "my stake",
+        "my bet is",
+        "backing this prediction",
+        "stake for this pick",
+        "got ",
+        "punto ",
+        "puntata ",
+        "vado con ",
+        "entrando nesta previsao",
+        "entrada para este palpite",
+        "vou de ",
+        "cad",
+        "eur",
+        "usd",
+        "gbp",
+        "brl",
+        "try",
+        "bdt",
+        "inr",
+        "aed",
     ]
-    if any(marker in body for marker in goal_markers):
-        template_path = TEMPLATE_IMAGE_GOAL or TEMPLATE_IMAGE_LIVE
+    template_path = TEMPLATE_IMAGE_LIVE if any(marker in body for marker in live_markers) else TEMPLATE_IMAGE_GOAL
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
