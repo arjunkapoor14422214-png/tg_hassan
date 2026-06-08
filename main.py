@@ -339,6 +339,8 @@ def get_target_channel_override(chat_id=None):
     promocode_text = os.getenv(f"TARGET_PROMOCODE_{suffix}", "").strip()
     button3_text = os.getenv(f"TARGET_BUTTON3_TEXT_{suffix}", "").strip()
     button3_url = os.getenv(f"TARGET_BUTTON3_URL_{suffix}", "").strip()
+    ai_target_lang = os.getenv(f"TARGET_AI_LANG_{suffix}", "").strip()
+    ai_style_prompt = os.getenv(f"TARGET_AI_STYLE_PROMPT_{suffix}", "").strip()
 
     if promocode_text:
         override["promocode_text"] = promocode_text
@@ -346,8 +348,22 @@ def get_target_channel_override(chat_id=None):
         override["button3_text"] = button3_text
     if button3_url:
         override["button3_url"] = button3_url
+    if ai_target_lang:
+        override["ai_target_lang"] = ai_target_lang
+    if ai_style_prompt:
+        override["ai_style_prompt"] = ai_style_prompt
 
     return override
+
+
+def get_target_ai_language(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    return override.get("ai_target_lang") or AI_TARGET_LANG
+
+
+def get_target_ai_style_prompt(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    return override.get("ai_style_prompt") or AI_STYLE_PROMPT
 
 
 def get_target_promocode_text(chat_id=None):
@@ -1427,9 +1443,9 @@ def output_uses_supported_numbers(source_text, output_text):
     return True
 
 
-def build_ai_system_prompt(strict_numbers=False):
+def build_ai_system_prompt(strict_numbers=False, chat_id=None):
     prompt = (
-        f"{AI_STYLE_PROMPT}\n\n"
+        f"{get_target_ai_style_prompt(chat_id)}\n\n"
         "Write only the final Telegram post body. "
         "Output in the requested target language when it is provided. "
         "Keep facts, teams, odds, promo details, and intent accurate. "
@@ -1460,11 +1476,11 @@ def build_ai_system_prompt(strict_numbers=False):
     return prompt
 
 
-def request_ai_text(user_prompt, strict_numbers=False):
+def request_ai_text(user_prompt, strict_numbers=False, chat_id=None):
     payload = {
         "model": AI_MODEL,
         "messages": [
-            {"role": "system", "content": build_ai_system_prompt(strict_numbers=strict_numbers)},
+            {"role": "system", "content": build_ai_system_prompt(strict_numbers=strict_numbers, chat_id=chat_id)},
             {"role": "user", "content": user_prompt},
         ],
     }
@@ -1500,7 +1516,7 @@ def request_ai_text(user_prompt, strict_numbers=False):
     return ai_text
 
 
-def process_text_with_ai(text):
+def process_text_with_ai(text, chat_id=None):
     if not text:
         return text
 
@@ -1511,14 +1527,15 @@ def process_text_with_ai(text):
         raise AIHoldError("AI_API_KEY is missing")
 
     user_prompt = text
-    if AI_TARGET_LANG:
-        user_prompt = f"Target language: {AI_TARGET_LANG}\n\n{text}"
+    target_ai_language = get_target_ai_language(chat_id)
+    if target_ai_language:
+        user_prompt = f"Target language: {target_ai_language}\n\n{text}"
 
     try:
-        ai_text = request_ai_text(user_prompt, strict_numbers=False)
+        ai_text = request_ai_text(user_prompt, strict_numbers=False, chat_id=chat_id)
         if not output_uses_supported_numbers(text, ai_text):
             print("AI numeric mismatch detected, retrying with strict numeric constraints")
-            ai_text = request_ai_text(user_prompt, strict_numbers=True)
+            ai_text = request_ai_text(user_prompt, strict_numbers=True, chat_id=chat_id)
             if not output_uses_supported_numbers(text, ai_text):
                 raise AIHoldError("AI introduced unsupported numeric values")
 
@@ -1544,7 +1561,7 @@ def build_final_text(post_data, use_ai=True, chat_id=None):
 
     text = post_data.get("processed_text")
     if text is None:
-        text = process_text_with_ai(ai_input) if use_ai else ai_input
+        text = process_text_with_ai(ai_input, chat_id=chat_id) if use_ai else ai_input
 
     text = remove_source_brand_residue(text, chat_id=chat_id)
     text = add_thematic_emojis(text)
