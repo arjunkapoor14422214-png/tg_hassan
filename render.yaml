@@ -6,7 +6,7 @@ services:
     startCommand: python main.py
     autoDeployTrigger: commit
     disk:
-      name: bot-data
+      name: tg-copy-data
       mountPath: /opt/render/project/src/data
       sizeGB: 5
     envVars:
@@ -14,9 +14,61 @@ services:
         value: 3.13.13
       - key: BOT_TOKEN
         sync: false
+      - key: SOURCE_CHANNEL
+        sync: false
       - key: TARGET_CHANNEL
         sync: false
       - key: TARGET_CHANNELS
+        sync: false
+      - key: SOURCE_CHANNEL_2
+        sync: false
+      - key: TARGET_CHANNEL_2
+        sync: false
+      - key: TARGET_CHANNELS_2
+        sync: false
+      - key: SOURCE_CHANNEL_3
+        sync: false
+      - key: TARGET_CHANNEL_3
+        sync: false
+      - key: TARGET_CHANNELS_3
+        sync: false
+      - key: ROUTE_4_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_4_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_4_TARGET_CHANNELS
+        sync: false
+      - key: ROUTE_5_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_5_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_5_TARGET_CHANNELS
+        sync: false
+      - key: ROUTE_6_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_6_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_6_TARGET_CHANNELS
+        sync: false
+      - key: ROUTE_7_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_7_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_7_TARGET_CHANNELS
+        sync: false
+      - key: ROUTE_8_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_8_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_8_TARGET_CHANNELS
+        sync: false
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: TG_SESSION_STRING
+        sync: false
+      - key: AI_API_KEY
         sync: false
       - key: SKIP_BACKLOG_ON_STARTUP
         value: "true"
@@ -26,38 +78,44 @@ services:
         value: "Europe/Warsaw"
       - key: ALLOW_TEXT_ONLY_POSTS
         value: "false"
-      - key: TARGET_ALBUM_BUTTONS_1003798871790
+      - key: ROUTE_1_MODE
+        value: "standard"
+      - key: ROUTE_2_MODE
+        value: "standard"
+      - key: ROUTE_3_MODE
+        value: "standard"
+      - key: ROUTE_4_MODE
+        value: "standard"
+      - key: ROUTE_5_MODE
+        value: "standard"
+      - key: ROUTE_6_MODE
+        value: "standard"
+      - key: ROUTE_7_MODE
+        value: "standard"
+      - key: ROUTE_8_MODE
+        value: "standard"
+      - key: ROUTE_1_ALLOW_TEXT_ONLY_POSTS
         value: "false"
-      - key: ROUTE_1_SKIP_TO_LATEST_ONCE
+      - key: ROUTE_2_ALLOW_TEXT_ONLY_POSTS
         value: "false"
-      - key: SOURCE_CHANNEL_2
-        sync: false
-      - key: TARGET_CHANNEL_2
-        sync: false
-      - key: TARGET_CHANNELS_2
-        sync: false
-      - key: ROUTE_2_SKIP_TO_LATEST_ONCE
+      - key: ROUTE_3_ALLOW_TEXT_ONLY_POSTS
         value: "false"
-      - key: SOURCE_CHANNEL_3
-        sync: false
-      - key: TARGET_CHANNEL_3
-        sync: false
-      - key: TARGET_CHANNELS_3
-        sync: false
-      - key: ROUTE_3_SKIP_TO_LATEST_ONCE
+      - key: ROUTE_4_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_5_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_6_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_7_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_8_ALLOW_TEXT_ONLY_POSTS
         value: "false"
       - key: REVIEW_CHANNEL_ID
         value: ""
-      - key: SOURCE_CHANNEL
-        sync: false
-      - key: TG_API_ID
-        sync: false
-      - key: TG_API_HASH
-        sync: false
-      - key: TG_SESSION_STRING
-        sync: false
       - key: MODERATION_ENABLED
         value: "false"
+      - key: PRIMARY_PARTNER_ONLY_MODE
+        value: "true"
       - key: BUTTON1_TEXT
         value: "ULTRAPARI BONUS"
       - key: BUTTON1_URL
@@ -76,36 +134,12 @@ services:
         value: "https://lb-aff.com/L?tag=d_5445297m_22611c_site&site=5445297&ad=22611&r=registration"
       - key: AI_ENABLED
         value: "true"
-      - key: AI_API_KEY
-        sync: false
       - key: AI_MODEL
         value: "gpt-4.1-mini"
-      - key: AI_STYLE_PROMPT
-        value: "Rewrite the source into polished Arabic Telegram copy for a betting and sports Telegram channel. Make it sound native, confident, clean, premium, and easy to read on mobile. Keep facts, odds, teams, injuries, and promo meaning accurate. If the source is promo or betting content, make it punchy and persuasive. If the source is sports news, keep it fast, sharp, and factual. Use short rhythmic lines, elegant Arabic wording, and selective emojis. Never mention the source channel, source attribution, or foreign partner brands. No hashtags, no markdown, no filler, and no fake claims."
       - key: AI_TARGET_LANG
         value: "Arabic"
       - key: PROMOCODE_TEXT
         value: "PROMOCODE: NILE"
-      - key: TARGET_PROMOCODE_1003931996970
-        value: "PROMOCODE: KARIMBET"
-      - key: TARGET_BUTTON3_URL_1003931996970
-        value: "https://lckypr.com/B3rDdYb"
-      - key: TARGET_AI_LANG_1003931996970
-        value: "Moroccan Arabic dialect in Arabic script"
-      - key: TARGET_AI_STYLE_PROMPT_1003931996970
-        value: "Rewrite the source into polished Moroccan Darija in Arabic script for a betting and sports Telegram channel. Make it sound native, natural, modern, and easy to read on mobile in Moroccan Arabic dialect written with Arabic letters. Keep facts, odds, teams, injuries, and promo meaning accurate. If the source is promo or betting content, make it punchy and persuasive. If the source is sports news, keep it fast, sharp, and factual. Never switch to MSA unless needed for clarity. Never mention the source channel, source attribution, or foreign partner brands. No hashtags, no markdown, no filler, and no fake claims."
-      - key: TARGET_PROMOCODE_1003243126359
-        value: "PROMOCODE: HASSANKING"
-      - key: TARGET_BUTTON3_URL_1003243126359
-        value: "https://lckypr.com/Ar0fxvk"
-      - key: TARGET_AI_LANG_1003243126359
-        value: "Moroccan Darija in Latin script"
-      - key: TARGET_AI_STYLE_PROMPT_1003243126359
-        value: "Rewrite the source into polished Moroccan Darija written in Latin script for a betting and sports Telegram channel. Make it sound native, natural, modern, and easy to read on mobile in Moroccan Darija using Latin letters. Keep facts, odds, teams, injuries, and promo meaning accurate. If the source is promo or betting content, make it punchy and persuasive. If the source is sports news, keep it fast, sharp, and factual. Never drift into standard Arabic or French unless a natural Darija phrase needs it. Never mention the source channel, source attribution, or foreign partner brands. No hashtags, no markdown, no filler, and no fake claims."
-      - key: TARGET_PROMOCODE_1003992124118
-        value: "PROMOCODE: PROFIT69"
-      - key: TARGET_BUTTON3_URL_1003992124118
-        value: "https://lckypr.com/B3rDdYb"
       - key: APK_URL
         value: "https://t.me/PLATINUM_APK"
       - key: LUCKYPARI_APK_URL
@@ -119,4 +153,78 @@ services:
       - key: ALBUM_CHANNEL_URL
         value: "https://t.me/PLATINUM_APK"
       - key: BONUS_BUTTON_MESSAGE
-        value: "Bonusni oling"
+        value: "Get bonus"
+
+  - type: worker
+    name: tg-signal-worker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    autoDeployTrigger: commit
+    disk:
+      name: tg-signal-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 5
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.13
+      - key: BOT_TOKEN
+        sync: false
+      - key: SOURCE_CHANNEL
+        sync: false
+      - key: TARGET_CHANNEL
+        sync: false
+      - key: TARGET_CHANNELS
+        sync: false
+      - key: ROUTE_2_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_2_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_2_TARGET_CHANNELS
+        sync: false
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: TG_SESSION_STRING
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: SKIP_BACKLOG_ON_STARTUP
+        value: "true"
+      - key: UNLIMITED_DAILY_POSTS
+        value: "true"
+      - key: DAILY_LIMIT_TIMEZONE
+        value: "Europe/Warsaw"
+      - key: ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_1_MODE
+        value: "custom_signal"
+      - key: ROUTE_2_MODE
+        value: "clone_template"
+      - key: ROUTE_1_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_2_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: MODERATION_ENABLED
+        value: "false"
+      - key: PRIMARY_PARTNER_ONLY_MODE
+        value: "true"
+      - key: BUTTON3_TEXT
+        value: "LUCKYPARI BONUS"
+      - key: BUTTON3_URL
+        sync: false
+      - key: TEMPLATE_IMAGE_LIVE
+        value: "assets/signal_live.png"
+      - key: TEMPLATE_IMAGE_GOAL
+        value: "assets/signal_goal.png"
+      - key: CLONE_TARGET_CURRENCY
+        value: "CAD"
+      - key: CLONE_STAKE_TEMPLATES
+        value: ""
+      - key: AI_ENABLED
+        value: "true"
+      - key: AI_MODEL
+        value: "gpt-4.1-mini"
+      - key: PROMOCODE_TEXT
+        sync: false

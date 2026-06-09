@@ -55,6 +55,15 @@ def route_env_prefix(route_id):
     return re.sub(r"[^A-Z0-9]+", "_", (route_id or "").upper()).strip("_")
 
 
+def normalize_route_mode(value):
+    mode = (value or "").strip().lower()
+    if mode in {"signal", "custom_signal", "custom-signal"}:
+        return "custom_signal"
+    if mode in {"clone", "clone_template", "clone-template"}:
+        return "clone_template"
+    return "standard"
+
+
 def route_backfill_latest_once_enabled(route_id):
     if not route_id:
         return False
@@ -121,12 +130,33 @@ def text_only_posts_allowed():
     return env_flag("ALLOW_TEXT_ONLY_POSTS", False)
 
 
+def route_text_only_posts_allowed(route_id=None):
+    if route_id:
+        scoped_value = os.getenv(f"{route_env_prefix(route_id)}_ALLOW_TEXT_ONLY_POSTS")
+        if scoped_value is not None:
+            return scoped_value.strip().lower() in {"1", "true", "yes", "on"}
+    return text_only_posts_allowed()
+
+
 def custom_signal_mode_enabled():
     return env_flag("CUSTOM_SIGNAL_MODE", False)
 
 
 def clone_template_media_mode_enabled():
     return env_flag("CLONE_TEMPLATE_MEDIA_MODE", False)
+
+
+def route_mode(route_id=None):
+    if route_id:
+        scoped_value = os.getenv(f"{route_env_prefix(route_id)}_MODE")
+        if scoped_value is not None:
+            return normalize_route_mode(scoped_value)
+
+    if clone_template_media_mode_enabled():
+        return "clone_template"
+    if custom_signal_mode_enabled():
+        return "custom_signal"
+    return "standard"
 
 
 API_ID = os.getenv("TG_API_ID")
@@ -356,6 +386,7 @@ def get_target_channel_override(chat_id=None):
     ai_style_prompt = os.getenv(f"TARGET_AI_STYLE_PROMPT_{suffix}", "").strip()
     clone_target_currency = os.getenv(f"TARGET_CLONE_CURRENCY_{suffix}", "").strip()
     clone_stake_templates = os.getenv(f"TARGET_CLONE_STAKE_TEMPLATES_{suffix}", "").strip()
+    bonus_button_message = os.getenv(f"TARGET_BONUS_BUTTON_MESSAGE_{suffix}", "").strip()
 
     if bot_token:
         override["bot_token"] = bot_token
@@ -373,6 +404,8 @@ def get_target_channel_override(chat_id=None):
         override["clone_target_currency"] = clone_target_currency
     if clone_stake_templates:
         override["clone_stake_templates"] = clone_stake_templates
+    if bonus_button_message:
+        override["bonus_button_message"] = bonus_button_message
 
     return override
 
@@ -395,6 +428,11 @@ def get_target_promocode_text(chat_id=None):
 def get_target_bot_token(chat_id=None):
     override = get_target_channel_override(chat_id)
     return override.get("bot_token") or BOT_TOKEN
+
+
+def get_target_bonus_button_message(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    return override.get("bonus_button_message") or BONUS_BUTTON_MESSAGE
 
 
 def get_target_companies(chat_id=None):
@@ -482,15 +520,54 @@ def build_route(route_id, source_channel, target_channels):
     }
 
 
-ROUTES = [
-    route
-    for route in [
-        build_route("route_1", SOURCE_CHANNEL, TARGET_CHANNELS),
-        build_route("route_2", SOURCE_CHANNEL_2, TARGET_CHANNELS_2),
-        build_route("route_3", SOURCE_CHANNEL_3, TARGET_CHANNELS_3),
-    ]
-    if route
-]
+def load_routes():
+    route_candidates = []
+
+    route_candidates.append(("route_1", SOURCE_CHANNEL, TARGET_CHANNELS))
+
+    legacy_index = 2
+    while True:
+        legacy_source = (os.getenv(f"SOURCE_CHANNEL_{legacy_index}") or "").strip()
+        legacy_target = (os.getenv(f"TARGET_CHANNEL_{legacy_index}") or "").strip()
+        legacy_targets = parse_telegram_peers(os.getenv(f"TARGET_CHANNELS_{legacy_index}", ""))
+        if not legacy_targets and legacy_target:
+            legacy_targets = [parse_telegram_peer(legacy_target)]
+
+        if not legacy_source and not legacy_target and not legacy_targets:
+            break
+
+        route_candidates.append((f"route_{legacy_index}", legacy_source, legacy_targets))
+        legacy_index += 1
+
+    indexed_route_numbers = set()
+    for key in os.environ:
+        match = re.fullmatch(r"ROUTE_(\d+)_SOURCE_CHANNEL", key)
+        if match:
+            indexed_route_numbers.add(int(match.group(1)))
+
+    for route_number in sorted(indexed_route_numbers):
+        route_id = f"route_{route_number}"
+        source_value = (os.getenv(f"ROUTE_{route_number}_SOURCE_CHANNEL") or "").strip()
+        target_value = (os.getenv(f"ROUTE_{route_number}_TARGET_CHANNEL") or "").strip()
+        target_channels = parse_telegram_peers(os.getenv(f"ROUTE_{route_number}_TARGET_CHANNELS", ""))
+        if not target_channels and target_value:
+            target_channels = [parse_telegram_peer(target_value)]
+        route_candidates.append((route_id, source_value, target_channels))
+
+    seen_route_ids = set()
+    routes = []
+    for route_id, source_value, target_channels in route_candidates:
+        if route_id in seen_route_ids:
+            continue
+        seen_route_ids.add(route_id)
+        route = build_route(route_id, source_value, target_channels)
+        if route:
+            routes.append(route)
+
+    return routes
+
+
+ROUTES = load_routes()
 
 
 def build_partner_block(chat_id=None):
@@ -908,10 +985,10 @@ def build_moderation_markup(post_key):
     }
 
 
-def apply_promocode_rule(text, chat_id=None):
+def apply_promocode_rule(text, chat_id=None, route_id=None):
     text = normalize_promocode_lines((text or "").strip(), chat_id=chat_id)
     promocode_text = get_target_promocode_text(chat_id)
-    if custom_signal_mode_enabled() and promocode_text:
+    if route_mode(route_id) == "custom_signal" and promocode_text:
         promocode_text = f"🎁 {promocode_text.lstrip('🎁 ').strip()}"
     if not text:
         return promocode_text
@@ -998,7 +1075,7 @@ def format_custom_signal_blocks(text):
     return "\n\n".join(block for block in blocks if block.strip()).strip()
 
 
-def build_custom_signal_post(text, chat_id=None):
+def build_custom_signal_post(text, chat_id=None, route_id=None):
     body = cleanup_signal_text(text)
     body = inject_cad_signal_line(body)
     body = format_custom_signal_blocks(body)
@@ -1007,7 +1084,7 @@ def build_custom_signal_post(text, chat_id=None):
         target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
         if target_link:
             body = f"{body}\n\n{target_link}".strip()
-    body = apply_promocode_rule(body, chat_id=chat_id)
+    body = apply_promocode_rule(body, chat_id=chat_id, route_id=route_id)
     return body, add_inline_link
 
 
@@ -1084,10 +1161,10 @@ def rewrite_clone_stake_line(line, chat_id=None):
     return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
 
 
-def rewrite_clone_template_text(text, chat_id=None):
+def rewrite_clone_template_text(text, chat_id=None, route_id=None):
     body = (text or "").replace("\r\n", "\n").strip()
     if not body:
-        return apply_promocode_rule("", chat_id=chat_id)
+        return apply_promocode_rule("", chat_id=chat_id, route_id=route_id)
 
     target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
     target_promocode = get_target_promocode_text(chat_id)
@@ -1109,13 +1186,13 @@ def rewrite_clone_template_text(text, chat_id=None):
     if target_link and target_link not in body and SOURCE_LINK_PATTERN.search(text or ""):
         body = f"{body}\n\n{target_link}".strip()
     if not saw_promocode:
-        body = apply_promocode_rule(body, chat_id=chat_id)
+        body = apply_promocode_rule(body, chat_id=chat_id, route_id=route_id)
 
     body = re.sub(r"\n{3,}", "\n\n", body)
     return body.strip()
 
 
-def render_custom_signal_text(text):
+def render_custom_signal_text(text, chat_id=None):
     def render_signal_segment(segment):
         escaped_segment = escape(segment or "")
         escaped_segment = re.sub(r"(\b\d+(?:[.,]\d+)?\s?(?:CAD|EUR|USD|GBP|BRL|TRY|BDT|INR|AED)\b)", r"<b>\1</b>", escaped_segment)
@@ -1125,7 +1202,7 @@ def render_custom_signal_text(text):
     safe_lines = []
     for raw_line in (text or "").splitlines():
         stripped_line = (raw_line or "").strip()
-        if stripped_line == (get_target_channel_override(chat_id=None).get("button3_url") or BUTTON3_URL):
+        if stripped_line == (get_target_channel_override(chat_id=chat_id).get("button3_url") or BUTTON3_URL):
             safe_lines.append(f"<b>{escape(stripped_line)}</b>")
             continue
         if "PROMOCODE" in stripped_line.upper():
@@ -1232,13 +1309,13 @@ def render_line_html(line, chat_id=None):
     return "".join(rendered_parts) if rendered_parts else render_text_segment_html(raw_line)
 
 
-def prepare_telegram_text(text, limit=None, chat_id=None):
+def prepare_telegram_text(text, limit=None, chat_id=None, route_id=None):
     text = text if text else "[Ð±ÐµÐ· Ñ‚ÐµÐºÑÑ‚Ð°]"
     if limit:
         text = text[:limit]
 
-    if custom_signal_mode_enabled():
-        return render_custom_signal_text(text)
+    if route_mode(route_id) == "custom_signal":
+        return render_custom_signal_text(text, chat_id=chat_id)
 
     safe_lines = []
     for raw_line in text.splitlines():
@@ -1681,13 +1758,17 @@ def process_text_with_ai(text, chat_id=None):
 
 def build_final_text(post_data, use_ai=True, chat_id=None):
     source_text = post_data.get("text", "")
-    if custom_signal_mode_enabled():
-        custom_text, has_inline_link = build_custom_signal_post(source_text, chat_id=chat_id)
+    route_id = post_data.get("route_id")
+    mode = route_mode(route_id)
+
+    if mode == "custom_signal":
+        custom_text, has_inline_link = build_custom_signal_post(source_text, chat_id=chat_id, route_id=route_id)
         post_data["has_inline_custom_link"] = has_inline_link
         return custom_text
-    if clone_template_media_mode_enabled():
+
+    if mode == "clone_template":
         post_data["has_inline_custom_link"] = True
-        return rewrite_clone_template_text(source_text, chat_id=chat_id)
+        return rewrite_clone_template_text(source_text, chat_id=chat_id, route_id=route_id)
 
     inline_partners = bool(post_data.get("inline_partners"))
     primary_partner_only = bool(post_data.get("primary_partner_only"))
@@ -1740,17 +1821,17 @@ def perform_post_request(url, request_name="request", timeout=60, **kwargs):
 
 
 
-def send_text(text, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
+def send_text(text, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None, route_id=None):
     bot_token = get_target_bot_token(chat_id)
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     normalized_text = text
 
     if text in {"ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", "Ã°Å¸â€˜â€¡ Ãâ€˜ÃÂ¾ÃÂ½Ã‘Æ’Ã‘ÂÃÂ½Ã‘â€¹ÃÂµ Ã‘ÂÃ‘ÂÃ‘â€¹ÃÂ»ÃÂºÃÂ¸"}:
-        normalized_text = BONUS_BUTTON_MESSAGE
+        normalized_text = get_target_bonus_button_message(chat_id)
 
     payload = {
         "chat_id": chat_id or TARGET_CHANNEL,
-        "text": prepare_telegram_text(normalized_text, chat_id=chat_id),
+        "text": prepare_telegram_text(normalized_text, chat_id=chat_id, route_id=route_id),
         "disable_web_page_preview": True,
         "parse_mode": "HTML",
     }
@@ -1769,13 +1850,13 @@ def send_text(text, with_buttons=False, chat_id=None, reply_markup=None, reply_t
 
 
 
-def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
+def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None, route_id=None):
     bot_token = get_target_bot_token(chat_id)
     url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
 
     data = {
         "chat_id": chat_id or TARGET_CHANNEL,
-        "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id),
+        "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id, route_id=route_id),
         "parse_mode": "HTML",
     }
 
@@ -1800,13 +1881,13 @@ def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_
         )
 
 
-def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
+def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None, route_id=None):
     bot_token = get_target_bot_token(chat_id)
     url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
 
     data = {
         "chat_id": chat_id or TARGET_CHANNEL,
-        "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id),
+        "caption": prepare_telegram_text(caption, limit=1024, chat_id=chat_id, route_id=route_id),
         "parse_mode": "HTML",
         "supports_streaming": True,
     }
@@ -1832,7 +1913,7 @@ def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_
         )
 
 
-def send_media_group(media_items, caption, chat_id=None, reply_to_message_id=None):
+def send_media_group(media_items, caption, chat_id=None, reply_to_message_id=None, route_id=None):
     bot_token = get_target_bot_token(chat_id)
     url = f"https://api.telegram.org/bot{bot_token}/sendMediaGroup"
 
@@ -1852,7 +1933,7 @@ def send_media_group(media_items, caption, chat_id=None, reply_to_message_id=Non
             }
 
             if i == 0 and caption:
-                item["caption"] = prepare_telegram_text(caption, limit=1024, chat_id=chat_id)
+                item["caption"] = prepare_telegram_text(caption, limit=1024, chat_id=chat_id, route_id=route_id)
                 item["parse_mode"] = "HTML"
             if media_type == "video":
                 item["supports_streaming"] = True
@@ -2396,7 +2477,7 @@ def has_reply_reference(message):
     return True
 
 
-def should_skip_post(messages):
+def should_skip_post(messages, route_id=None):
     post_messages = messages or []
     if not post_messages:
         return True
@@ -2415,7 +2496,7 @@ def should_skip_post(messages):
 
     has_text = any(get_message_text(message).strip() for message in post_messages)
     has_supported_media = count_supported_media(post_messages) > 0
-    if has_text and not has_supported_media and (custom_signal_mode_enabled() or not text_only_posts_allowed()):
+    if has_text and not has_supported_media and (route_mode(route_id) == "custom_signal" or not route_text_only_posts_allowed(route_id)):
         print("Skip reason: text-only post")
         return True
 
@@ -2583,6 +2664,7 @@ async def get_recent_messages_resilient(client, entity, limit=50, anchor_message
 
 async def rebuild_post_media(client, entity, post_data):
     expected_media_count = int(post_data.get("media_count") or 0)
+    route_id = post_data.get("route_id")
     media_items = post_data.get("media_items")
     if media_items is None:
         media_items = [
@@ -2590,7 +2672,7 @@ async def rebuild_post_media(client, entity, post_data):
             for path in (post_data.get("photo_paths") or [])
         ]
 
-    if clone_template_media_mode_enabled():
+    if route_mode(route_id) == "clone_template":
         template_image = choose_clone_template_image(post_data.get("text", ""))
         if not template_image:
             raise RuntimeError(
@@ -2661,7 +2743,7 @@ def count_supported_media(messages):
 
 
 
-async def get_post_data(client, entity):
+async def get_post_data(client, entity, route_id=None):
     messages = await client.get_messages(entity, limit=1)
 
     if not messages:
@@ -2683,7 +2765,7 @@ async def get_post_data(client, entity):
                     text = get_message_text(m)
                     break
 
-    if should_skip_post(post_messages):
+    if should_skip_post(post_messages, route_id=route_id):
         return None
 
     inline_partners = has_partner_mentions(text)
@@ -2693,6 +2775,7 @@ async def get_post_data(client, entity):
     primary_partner_only = should_use_primary_partner_fallback(text)
 
     return {
+        "route_id": route_id,
         "key": get_post_key(last_msg),
         "text": text,
         "media_items": [],
@@ -2709,7 +2792,7 @@ async def get_post_data(client, entity):
     }
 
 
-async def build_post_data_from_messages(client, messages):
+async def build_post_data_from_messages(client, messages, route_id=None):
     if not messages:
         return None
 
@@ -2717,7 +2800,7 @@ async def build_post_data_from_messages(client, messages):
     last_msg = post_messages[-1]
     text = ""
 
-    if should_skip_post(post_messages):
+    if should_skip_post(post_messages, route_id=route_id):
         return None
 
     for message in post_messages:
@@ -2735,6 +2818,7 @@ async def build_post_data_from_messages(client, messages):
     primary_partner_only = should_use_primary_partner_fallback(text)
 
     return {
+        "route_id": route_id,
         "key": get_post_key(last_msg),
         "text": text,
         "media_items": [],
@@ -2751,7 +2835,7 @@ async def build_post_data_from_messages(client, messages):
     }
 
 
-async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_source_message_id=None):
+async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_source_message_id=None, route_id=None):
     anchor_message_id = None
     if last_post_key and last_post_key.startswith("msg_"):
         suffix = last_post_key[4:]
@@ -2791,7 +2875,7 @@ async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_s
 
     posts = []
     for post_key in new_keys:
-        post_data = await build_post_data_from_messages(client, grouped_messages[post_key])
+        post_data = await build_post_data_from_messages(client, grouped_messages[post_key], route_id=route_id)
         if post_data and (
             not min_source_message_id
             or int(post_data.get("source_message_id") or 0) > int(min_source_message_id)
@@ -2837,6 +2921,7 @@ def get_response_message_ids(response):
 
 def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
     text = post_data.get("processed_text", "")
+    route_id = post_data.get("route_id")
     expected_media_count = int(post_data.get("media_count") or 0)
     media_items = post_data.get("media_items")
     if media_items is None:
@@ -2872,6 +2957,7 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
             with_buttons=with_buttons,
             chat_id=chat_id,
             reply_to_message_id=reply_to_message_id,
+            route_id=route_id,
         )
         print(f"Text sent to {safe_console_text(chat_id)}:", response.status_code)
         print(response.text)
@@ -2887,6 +2973,7 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
                 with_buttons=with_buttons,
                 chat_id=chat_id,
                 reply_to_message_id=reply_to_message_id,
+                route_id=route_id,
             )
             print(f"One video sent to {safe_console_text(chat_id)}:", response.status_code)
         else:
@@ -2896,6 +2983,7 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
                 with_buttons=with_buttons,
                 chat_id=chat_id,
                 reply_to_message_id=reply_to_message_id,
+                route_id=route_id,
             )
             print(f"One photo sent to {safe_console_text(chat_id)}:", response.status_code)
         print(response.text)
@@ -2903,7 +2991,13 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
         return message_ids[0] if response_ok(response) and message_ids else None
 
     else:
-        response = send_media_group(media_items, text, chat_id=chat_id, reply_to_message_id=reply_to_message_id)
+        response = send_media_group(
+            media_items,
+            text,
+            chat_id=chat_id,
+            reply_to_message_id=reply_to_message_id,
+            route_id=route_id,
+        )
         print(f"Album sent to {safe_console_text(chat_id)} ({len(media_items)} media):", response.status_code)
         print(response.text)
 
@@ -3214,7 +3308,7 @@ async def process_route(client, route, state):
         return
 
     if route_backfill_latest_once_enabled(route_id) and not route_state.get("latest_backfill_once_completed"):
-        latest_posts = await get_new_posts_data(client, entity, last_post_key=None, limit=1)
+        latest_posts = await get_new_posts_data(client, entity, last_post_key=None, limit=1, route_id=route_id)
         if latest_posts:
             latest_post = latest_posts[-1]
             print(f"[{route_id}] Backfill latest once: {latest_post['key']}")
@@ -3266,6 +3360,7 @@ async def process_route(client, route, state):
         route_state.get("last_post_key"),
         limit=NEW_POST_SCAN_LIMIT,
         min_source_message_id=get_route_min_source_message_id(state, route_id),
+        route_id=route_id,
     )
     print(f"[{route_id}] New posts found:", len(new_posts))
     print(f"[{route_id}] State key:", route_state.get("last_post_key"))
