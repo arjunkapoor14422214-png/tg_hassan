@@ -388,6 +388,8 @@ def get_target_channel_override(chat_id=None):
     clone_stake_templates = os.getenv(f"TARGET_CLONE_STAKE_TEMPLATES_{suffix}", "").strip()
     clone_template_live = os.getenv(f"TARGET_TEMPLATE_IMAGE_LIVE_{suffix}", "").strip()
     clone_template_goal = os.getenv(f"TARGET_TEMPLATE_IMAGE_GOAL_{suffix}", "").strip()
+    signal_template_live = os.getenv(f"TARGET_SIGNAL_IMAGE_LIVE_{suffix}", "").strip()
+    signal_template_goal = os.getenv(f"TARGET_SIGNAL_IMAGE_GOAL_{suffix}", "").strip()
     bonus_button_message = os.getenv(f"TARGET_BONUS_BUTTON_MESSAGE_{suffix}", "").strip()
 
     if bot_token:
@@ -410,6 +412,10 @@ def get_target_channel_override(chat_id=None):
         override["clone_template_live"] = clone_template_live
     if clone_template_goal:
         override["clone_template_goal"] = clone_template_goal
+    if signal_template_live:
+        override["signal_template_live"] = signal_template_live
+    if signal_template_goal:
+        override["signal_template_goal"] = signal_template_goal
     if bonus_button_message:
         override["bonus_button_message"] = bonus_button_message
 
@@ -1115,6 +1121,38 @@ def choose_clone_template_image(text, chat_id=None):
     live_template = override.get("clone_template_live") or TEMPLATE_IMAGE_LIVE
     goal_template = override.get("clone_template_goal") or TEMPLATE_IMAGE_GOAL
     template_path = live_template if (any(marker in body for marker in live_markers) or has_stake_amount) else goal_template
+    return template_path if template_path and os.path.exists(template_path) else ""
+
+
+def choose_signal_template_image(text, chat_id=None):
+    override = get_target_channel_override(chat_id)
+    live_template = override.get("signal_template_live") or ""
+    goal_template = override.get("signal_template_goal") or ""
+    if not live_template and not goal_template:
+        return ""
+
+    body = (text or "").lower()
+    live_markers = [
+        "bet:",
+        "over ",
+        "under ",
+        "my bet",
+        "my stake",
+        "backing this prediction",
+    ]
+    goal_markers = [
+        "goal",
+        "prediction successful",
+        "congratulations",
+        "successful!",
+    ]
+    has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
+    if any(marker in body for marker in live_markers) or has_stake_amount:
+        template_path = live_template
+    elif any(marker in body for marker in goal_markers):
+        template_path = goal_template
+    else:
+        template_path = live_template or goal_template
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
@@ -2687,6 +2725,15 @@ async def rebuild_post_media(client, entity, post_data):
         rebuilt_post["photo_paths"] = []
         rebuilt_post["media_count"] = 1
         return rebuilt_post
+
+    if route_mode(route_id) == "custom_signal":
+        template_image = choose_signal_template_image(post_data.get("text", ""), chat_id=post_data.get("chat_id"))
+        if template_image:
+            rebuilt_post = dict(post_data)
+            rebuilt_post["media_items"] = [{"type": "photo", "path": template_image, "persistent": True}]
+            rebuilt_post["photo_paths"] = []
+            rebuilt_post["media_count"] = 1
+            return rebuilt_post
 
     if expected_media_count <= 0:
         return post_data
