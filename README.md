@@ -39,6 +39,9 @@ Optional:
 - `TEMPLATE_IMAGE_GOAL`
 - `CLONE_TARGET_CURRENCY`
 - `CLONE_STAKE_TEMPLATES`
+- `TARGET_BOT_TOKEN_<channelid>`
+- `TARGET_CLONE_CURRENCY_<channelid>`
+- `TARGET_CLONE_STAKE_TEMPLATES_<channelid>`
 
 Notes:
 
@@ -47,3 +50,4 @@ Notes:
 - Runtime state is stored in the local `data/` folder. Without a persistent disk on Render, this state resets after redeploys or restarts.
 - `CLONE_TEMPLATE_MEDIA_MODE=true` keeps the source text nearly unchanged, swaps promo/link to the target values, and replaces source media with local template images.
 - `CLONE_TARGET_CURRENCY` and `CLONE_STAKE_TEMPLATES` let clone channels localize the stake line, for example changing `600CAD` into a Portuguese or Italian `EUR` phrase while keeping the same amount.
+- `TARGET_BOT_TOKEN_<channelid>` lets one worker publish to multiple target channels with different bots, while still reading the source only once.

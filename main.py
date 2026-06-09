@@ -348,12 +348,17 @@ def get_target_channel_override(chat_id=None):
         return {}
 
     override = {}
+    bot_token = os.getenv(f"TARGET_BOT_TOKEN_{suffix}", "").strip()
     promocode_text = os.getenv(f"TARGET_PROMOCODE_{suffix}", "").strip()
     button3_text = os.getenv(f"TARGET_BUTTON3_TEXT_{suffix}", "").strip()
     button3_url = os.getenv(f"TARGET_BUTTON3_URL_{suffix}", "").strip()
     ai_target_lang = os.getenv(f"TARGET_AI_LANG_{suffix}", "").strip()
     ai_style_prompt = os.getenv(f"TARGET_AI_STYLE_PROMPT_{suffix}", "").strip()
+    clone_target_currency = os.getenv(f"TARGET_CLONE_CURRENCY_{suffix}", "").strip()
+    clone_stake_templates = os.getenv(f"TARGET_CLONE_STAKE_TEMPLATES_{suffix}", "").strip()
 
+    if bot_token:
+        override["bot_token"] = bot_token
     if promocode_text:
         override["promocode_text"] = promocode_text
     if button3_text:
@@ -364,6 +369,10 @@ def get_target_channel_override(chat_id=None):
         override["ai_target_lang"] = ai_target_lang
     if ai_style_prompt:
         override["ai_style_prompt"] = ai_style_prompt
+    if clone_target_currency:
+        override["clone_target_currency"] = clone_target_currency
+    if clone_stake_templates:
+        override["clone_stake_templates"] = clone_stake_templates
 
     return override
 
@@ -381,6 +390,11 @@ def get_target_ai_style_prompt(chat_id=None):
 def get_target_promocode_text(chat_id=None):
     override = get_target_channel_override(chat_id)
     return override.get("promocode_text") or PROMOCODE_TEXT
+
+
+def get_target_bot_token(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    return override.get("bot_token") or BOT_TOKEN
 
 
 def get_target_companies(chat_id=None):
@@ -1026,11 +1040,16 @@ def choose_clone_template_image(text):
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
-def get_clone_target_currency():
-    return CLONE_TARGET_CURRENCY or "CAD"
+def get_clone_target_currency(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    return override.get("clone_target_currency") or CLONE_TARGET_CURRENCY or "CAD"
 
 
-def clone_stake_line_templates():
+def clone_stake_line_templates(chat_id=None):
+    override = get_target_channel_override(chat_id)
+    scoped_templates = override.get("clone_stake_templates") or ""
+    if scoped_templates:
+        return [template.strip() for template in scoped_templates.split("||") if template.strip()]
     return CLONE_STAKE_TEMPLATES or []
 
 
@@ -1040,8 +1059,8 @@ def normalize_clone_stake_template(template):
     return body
 
 
-def rewrite_clone_stake_line(line):
-    currency = get_clone_target_currency()
+def rewrite_clone_stake_line(line, chat_id=None):
+    currency = get_clone_target_currency(chat_id)
     amount_match = re.search(r"(\d+(?:[.,]\d+)?)\s*CAD\b", line or "", flags=re.IGNORECASE)
     if not amount_match:
         return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
@@ -1057,8 +1076,9 @@ def rewrite_clone_stake_line(line):
             "my bet is",
         ]
     )
-    if looks_like_stake_line and clone_stake_line_templates():
-        template = normalize_clone_stake_template(SIGNAL_RANDOM.choice(clone_stake_line_templates()))
+    templates = clone_stake_line_templates(chat_id)
+    if looks_like_stake_line and templates:
+        template = normalize_clone_stake_template(SIGNAL_RANDOM.choice(templates))
         return f"💰 {template.format(amount=amount, currency=currency)}".strip()
 
     return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
@@ -1083,7 +1103,7 @@ def rewrite_clone_template_text(text, chat_id=None):
         if SOURCE_LINK_PATTERN.search(line):
             rewritten_lines.append(SOURCE_LINK_PATTERN.sub(target_link, line))
             continue
-        rewritten_lines.append(rewrite_clone_stake_line(line))
+        rewritten_lines.append(rewrite_clone_stake_line(line, chat_id=chat_id))
 
     body = "\n".join(rewritten_lines).strip()
     if target_link and target_link not in body and SOURCE_LINK_PATTERN.search(text or ""):
@@ -1721,7 +1741,8 @@ def perform_post_request(url, request_name="request", timeout=60, **kwargs):
 
 
 def send_text(text, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    bot_token = get_target_bot_token(chat_id)
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     normalized_text = text
 
     if text in {"ðŸ‘‡ Ð‘Ð¾Ð½ÑƒÑÐ½Ñ‹Ðµ ÑÑÑ‹Ð»ÐºÐ¸", "Ã°Å¸â€˜â€¡ Ãâ€˜ÃÂ¾ÃÂ½Ã‘Æ’Ã‘ÂÃÂ½Ã‘â€¹ÃÂµ Ã‘ÂÃ‘ÂÃ‘â€¹ÃÂ»ÃÂºÃÂ¸"}:
@@ -1749,7 +1770,8 @@ def send_text(text, with_buttons=False, chat_id=None, reply_markup=None, reply_t
 
 
 def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    bot_token = get_target_bot_token(chat_id)
+    url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
 
     data = {
         "chat_id": chat_id or TARGET_CHANNEL,
@@ -1779,7 +1801,8 @@ def send_one_photo(photo_path, caption, with_buttons=False, chat_id=None, reply_
 
 
 def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_markup=None, reply_to_message_id=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
+    bot_token = get_target_bot_token(chat_id)
+    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
 
     data = {
         "chat_id": chat_id or TARGET_CHANNEL,
@@ -1810,7 +1833,8 @@ def send_one_video(video_path, caption, with_buttons=False, chat_id=None, reply_
 
 
 def send_media_group(media_items, caption, chat_id=None, reply_to_message_id=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMediaGroup"
+    bot_token = get_target_bot_token(chat_id)
+    url = f"https://api.telegram.org/bot{bot_token}/sendMediaGroup"
 
     media = []
     opened_files = {}
