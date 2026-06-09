@@ -386,6 +386,8 @@ def get_target_channel_override(chat_id=None):
     ai_style_prompt = os.getenv(f"TARGET_AI_STYLE_PROMPT_{suffix}", "").strip()
     clone_target_currency = os.getenv(f"TARGET_CLONE_CURRENCY_{suffix}", "").strip()
     clone_stake_templates = os.getenv(f"TARGET_CLONE_STAKE_TEMPLATES_{suffix}", "").strip()
+    clone_template_live = os.getenv(f"TARGET_TEMPLATE_IMAGE_LIVE_{suffix}", "").strip()
+    clone_template_goal = os.getenv(f"TARGET_TEMPLATE_IMAGE_GOAL_{suffix}", "").strip()
     bonus_button_message = os.getenv(f"TARGET_BONUS_BUTTON_MESSAGE_{suffix}", "").strip()
 
     if bot_token:
@@ -404,6 +406,10 @@ def get_target_channel_override(chat_id=None):
         override["clone_target_currency"] = clone_target_currency
     if clone_stake_templates:
         override["clone_stake_templates"] = clone_stake_templates
+    if clone_template_live:
+        override["clone_template_live"] = clone_template_live
+    if clone_template_goal:
+        override["clone_template_goal"] = clone_template_goal
     if bonus_button_message:
         override["bonus_button_message"] = bonus_button_message
 
@@ -1088,7 +1094,7 @@ def build_custom_signal_post(text, chat_id=None, route_id=None):
     return body, add_inline_link
 
 
-def choose_clone_template_image(text):
+def choose_clone_template_image(text, chat_id=None):
     body = (text or "").lower()
     live_markers = [
         "bet:",
@@ -1105,7 +1111,10 @@ def choose_clone_template_image(text):
         "vou de ",
     ]
     has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
-    template_path = TEMPLATE_IMAGE_LIVE if (any(marker in body for marker in live_markers) or has_stake_amount) else TEMPLATE_IMAGE_GOAL
+    override = get_target_channel_override(chat_id)
+    live_template = override.get("clone_template_live") or TEMPLATE_IMAGE_LIVE
+    goal_template = override.get("clone_template_goal") or TEMPLATE_IMAGE_GOAL
+    template_path = live_template if (any(marker in body for marker in live_markers) or has_stake_amount) else goal_template
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
@@ -2667,7 +2676,7 @@ async def rebuild_post_media(client, entity, post_data):
         ]
 
     if route_mode(route_id) == "clone_template":
-        template_image = choose_clone_template_image(post_data.get("text", ""))
+        template_image = choose_clone_template_image(post_data.get("text", ""), chat_id=post_data.get("chat_id"))
         if not template_image:
             raise RuntimeError(
                 f"Clone template media mode is enabled but template image is missing for {post_data.get('key')}"
