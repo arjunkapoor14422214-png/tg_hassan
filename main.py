@@ -1200,6 +1200,45 @@ def rewrite_clone_stake_line(line, chat_id=None):
     return re.sub(r"\bCAD\b", currency, line or "", flags=re.IGNORECASE)
 
 
+def build_clone_line_translation_prompt(chat_id=None):
+    target_ai_language = get_target_ai_language(chat_id) or "the requested target language"
+    return (
+        f"Translate the user's single Telegram line into {target_ai_language}. "
+        "Keep the same meaning and almost the same structure. "
+        "Translate natural-language words like goal, congratulations, prediction successful, live, returns, and similar phrases. "
+        "Preserve team names, competition names when appropriate, scores, odds, currency amounts, promo values, punctuation, emojis, URLs, and betting notation exactly. "
+        "Do not invent or change any number. "
+        "Do not add hashtags, markdown, explanations, or extra lines. "
+        "Return only one translated line."
+    )
+
+
+def translate_clone_template_line(line, chat_id=None):
+    if not line or not line.strip():
+        return line
+    if not get_target_ai_language(chat_id):
+        return line
+    if SOURCE_LINK_PATTERN.search(line):
+        return line
+    if is_promocode_only_line(line):
+        return line
+    if re.search(r"\bPROMOCODE\b", line, flags=re.IGNORECASE):
+        return line
+    if re.search(r"\b\d+(?:[.,]\d+)?\s?(?:CAD|EUR|USD|GBP|BRL|TRY|BDT|INR|AED)\b", line, flags=re.IGNORECASE):
+        return line
+    if not re.search(r"[A-Za-z]", line):
+        return line
+
+    translated = request_ai_completion(
+        line,
+        build_clone_line_translation_prompt(chat_id=chat_id),
+        request_name="OpenAI clone line translation",
+    )
+    if not output_uses_supported_numbers(line, translated):
+        raise AIHoldError("Clone line translation introduced unsupported numeric values")
+    return translated.strip() or line
+
+
 def rewrite_clone_template_text(text, chat_id=None, route_id=None):
     body = (text or "").replace("\r\n", "\n").strip()
     if not body:
@@ -1219,7 +1258,9 @@ def rewrite_clone_template_text(text, chat_id=None, route_id=None):
         if SOURCE_LINK_PATTERN.search(line):
             rewritten_lines.append(SOURCE_LINK_PATTERN.sub(target_link, line))
             continue
-        rewritten_lines.append(rewrite_clone_stake_line(line, chat_id=chat_id))
+        localized_line = rewrite_clone_stake_line(line, chat_id=chat_id)
+        localized_line = translate_clone_template_line(localized_line, chat_id=chat_id)
+        rewritten_lines.append(localized_line)
 
     body = "\n".join(rewritten_lines).strip()
     if target_link and target_link not in body and SOURCE_LINK_PATTERN.search(text or ""):
@@ -1697,7 +1738,7 @@ def build_ai_system_prompt(strict_numbers=False, chat_id=None):
         "Output in the requested target language when it is provided. "
         "Keep facts, teams, odds, promo details, and intent accurate. "
         "Do not invent scores, odds, claims, or urgency. "
-        "Use natural Arabic that reads like a real channel post, not a literal translation. "
+        "Use natural wording that reads like a real channel post, not a literal translation. "
         "Make the text compact, stylish, and easy to scan in Telegram. "
         "Use 2 to 4 short visual paragraphs separated by blank lines. "
         "Most paragraphs should be 1 or 2 short lines, not one dense block. "
@@ -1723,11 +1764,11 @@ def build_ai_system_prompt(strict_numbers=False, chat_id=None):
     return prompt
 
 
-def request_ai_text(user_prompt, strict_numbers=False, chat_id=None):
+def request_ai_completion(user_prompt, system_prompt, request_name="OpenAI chat completion"):
     payload = {
         "model": AI_MODEL,
         "messages": [
-            {"role": "system", "content": build_ai_system_prompt(strict_numbers=strict_numbers, chat_id=chat_id)},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     }
@@ -1739,7 +1780,7 @@ def request_ai_text(user_prompt, strict_numbers=False, chat_id=None):
 
     response = perform_post_request(
         "https://api.openai.com/v1/chat/completions",
-        request_name="OpenAI chat completion",
+        request_name=request_name,
         headers=headers,
         json=payload,
         timeout=90,
@@ -1761,6 +1802,14 @@ def request_ai_text(user_prompt, strict_numbers=False, chat_id=None):
         raise AIHoldError("OpenAI returned empty text")
 
     return ai_text
+
+
+def request_ai_text(user_prompt, strict_numbers=False, chat_id=None):
+    return request_ai_completion(
+        user_prompt,
+        build_ai_system_prompt(strict_numbers=strict_numbers, chat_id=chat_id),
+        request_name="OpenAI chat completion",
+    )
 
 
 def process_text_with_ai(text, chat_id=None):
