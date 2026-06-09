@@ -62,6 +62,12 @@ services:
         sync: false
       - key: ROUTE_8_TARGET_CHANNELS
         sync: false
+      - key: ROUTE_9_SOURCE_CHANNEL
+        sync: false
+      - key: ROUTE_9_TARGET_CHANNEL
+        sync: false
+      - key: ROUTE_9_TARGET_CHANNELS
+        sync: false
       - key: TG_API_ID
         sync: false
       - key: TG_API_HASH
@@ -94,6 +100,8 @@ services:
         value: "standard"
       - key: ROUTE_8_MODE
         value: "standard"
+      - key: ROUTE_9_MODE
+        value: "standard"
       - key: ROUTE_1_ALLOW_TEXT_ONLY_POSTS
         value: "false"
       - key: ROUTE_2_ALLOW_TEXT_ONLY_POSTS
@@ -109,6 +117,8 @@ services:
       - key: ROUTE_7_ALLOW_TEXT_ONLY_POSTS
         value: "false"
       - key: ROUTE_8_ALLOW_TEXT_ONLY_POSTS
+        value: "false"
+      - key: ROUTE_9_ALLOW_TEXT_ONLY_POSTS
         value: "false"
       - key: REVIEW_CHANNEL_ID
         value: ""
