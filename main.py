@@ -2509,6 +2509,8 @@ def should_skip_post(messages, route_id=None):
 
 def cleanup_media_items(media_items):
     for media_item in media_items or []:
+        if media_item.get("persistent"):
+            continue
         media_path = media_item.get("path")
         if not media_path:
             continue
@@ -2680,7 +2682,7 @@ async def rebuild_post_media(client, entity, post_data):
             )
 
         rebuilt_post = dict(post_data)
-        rebuilt_post["media_items"] = [{"type": "photo", "path": template_image}]
+        rebuilt_post["media_items"] = [{"type": "photo", "path": template_image, "persistent": True}]
         rebuilt_post["photo_paths"] = []
         rebuilt_post["media_count"] = 1
         return rebuilt_post
