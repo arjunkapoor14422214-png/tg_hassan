@@ -1103,17 +1103,9 @@ def choose_clone_template_image(text):
         "entrando nesta previsao",
         "entrada para este palpite",
         "vou de ",
-        "cad",
-        "eur",
-        "usd",
-        "gbp",
-        "brl",
-        "try",
-        "bdt",
-        "inr",
-        "aed",
     ]
-    template_path = TEMPLATE_IMAGE_LIVE if any(marker in body for marker in live_markers) else TEMPLATE_IMAGE_GOAL
+    has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
+    template_path = TEMPLATE_IMAGE_LIVE if (any(marker in body for marker in live_markers) or has_stake_amount) else TEMPLATE_IMAGE_GOAL
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
