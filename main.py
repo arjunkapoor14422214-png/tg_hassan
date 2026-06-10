@@ -1229,14 +1229,22 @@ def translate_clone_template_line(line, chat_id=None):
     if not re.search(r"[A-Za-z]", line):
         return line
 
-    translated = request_ai_completion(
-        line,
-        build_clone_line_translation_prompt(chat_id=chat_id),
-        request_name="OpenAI clone line translation",
-    )
-    if not output_uses_supported_numbers(line, translated):
-        raise AIHoldError("Clone line translation introduced unsupported numeric values")
-    return translated.strip() or line
+    try:
+        translated = request_ai_completion(
+            line,
+            build_clone_line_translation_prompt(chat_id=chat_id),
+            request_name="OpenAI clone line translation",
+        )
+        if not output_uses_supported_numbers(line, translated):
+            print("Clone line translation numeric mismatch, using original line")
+            return line
+        return translated.strip() or line
+    except AIHoldError as e:
+        print("Clone line translation fallback:", str(e))
+        return line
+    except Exception as e:
+        print("Clone line translation error, using original line:", str(e))
+        return line
 
 
 def rewrite_clone_template_text(text, chat_id=None, route_id=None):
