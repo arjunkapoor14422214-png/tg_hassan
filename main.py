@@ -6,6 +6,7 @@ import random
 import re
 import sys
 import time
+import traceback
 import requests
 from datetime import datetime
 from html import escape
@@ -3571,4 +3572,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    while True:
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print("Fatal worker error:", str(e))
+            print(traceback.format_exc())
+            time.sleep(max(5, CHECK_INTERVAL))
