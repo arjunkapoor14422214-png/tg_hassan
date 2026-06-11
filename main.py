@@ -2598,9 +2598,47 @@ def has_reply_reference(message):
     return True
 
 
+INTERNAL_TEST_MARKERS = [
+    "sync test",
+    "render test",
+    "test canada flow",
+    "test portugal image check",
+    "portugal template retest",
+    "portugal prod retest",
+    "teste portugal verificação de imagem",
+    "teste portugal verificacao de imagem",
+    "portugal modelo reteste",
+    "test di sincronizzazione",
+    "test portogallo immagine verifica",
+    "portugal modello ritest",
+    "prueba portugal verificación de imagen",
+    "prueba portugal verificacion de imagen",
+    "portugal plantilla repetición",
+    "portugal plantilla repeticion",
+]
+
+
+def is_internal_test_post(messages):
+    body_parts = []
+    for message in messages or []:
+        text = get_message_text(message).strip()
+        if text:
+            body_parts.append(text.lower())
+
+    if not body_parts:
+        return False
+
+    body = "\n".join(body_parts)
+    return any(marker in body for marker in INTERNAL_TEST_MARKERS)
+
+
 def should_skip_post(messages, route_id=None):
     post_messages = messages or []
     if not post_messages:
+        return True
+
+    if is_internal_test_post(post_messages):
+        print("Skip reason: internal test post")
         return True
 
     if any(is_service_message(message) for message in post_messages):
