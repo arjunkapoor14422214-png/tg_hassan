@@ -3561,10 +3561,17 @@ async def main():
                     await handle_moderation_updates(client, None, state)
 
                 for route in ROUTES:
-                    await process_route(client, route, state)
+                    route_id = route.get("id", "unknown_route")
+                    try:
+                        await process_route(client, route, state)
+                    except AIHoldError as e:
+                        print(f"[{route_id}] AI hold mode:", str(e))
+                    except Exception as e:
+                        print(f"[{route_id}] Route loop error:", str(e))
+                        print(traceback.format_exc())
 
             except AIHoldError as e:
-                print("AI hold mode:", str(e))
+                print("Global AI hold mode:", str(e))
             except Exception as e:
                 print("Loop error:", str(e))
 
