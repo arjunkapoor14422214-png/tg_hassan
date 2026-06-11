@@ -584,7 +584,7 @@ ROUTES = load_routes()
 
 
 def find_downstream_routes(source_channel):
-    source_value = (source_channel or "").strip()
+    source_value = str(source_channel or "").strip()
     if not source_value:
         return []
     return [
@@ -1138,8 +1138,8 @@ def choose_clone_template_image(text, chat_id=None):
 
 def choose_signal_template_image(text, chat_id=None):
     override = get_target_channel_override(chat_id)
-    live_template = override.get("signal_template_live") or ""
-    goal_template = override.get("signal_template_goal") or ""
+    live_template = override.get("signal_template_live") or TEMPLATE_IMAGE_LIVE
+    goal_template = override.get("signal_template_goal") or TEMPLATE_IMAGE_GOAL
     if not live_template and not goal_template:
         return ""
 
