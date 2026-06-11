@@ -2245,6 +2245,19 @@ def get_sent_targets_for_post(state, route_id, post_key):
     }
 
 
+def get_mapped_targets_for_source_refs(state, route_id, target_channels, source_refs):
+    if state is None or not source_refs:
+        return set()
+
+    mapped_targets = set()
+    for chat_id in target_channels or []:
+        for source_ref in source_refs:
+            if get_target_message_id_for_source(state, route_id, chat_id, source_ref):
+                mapped_targets.add(str(chat_id))
+                break
+    return mapped_targets
+
+
 def mark_target_sent(state, route_id, post_key, chat_id):
     progress = get_post_progress(state, route_id)
     key = str(post_key)
@@ -3139,6 +3152,8 @@ def publish_post(post_data, use_ai=True, state=None):
         return False
 
     sent_targets = get_sent_targets_for_post(state, route_id, post_key) if state and post_key else set()
+    if state and source_message_refs:
+        sent_targets |= get_mapped_targets_for_source_refs(state, route_id, target_channels, source_message_refs)
 
     for chat_id in target_channels:
         chat_key = str(chat_id)
@@ -3477,6 +3492,39 @@ async def process_route(client, route, state):
     print(f"[{route_id}] State key:", route_state.get("last_post_key"))
 
     if not new_posts:
+        latest_post = await get_post_data(client, entity, route_id=route_id)
+        if (
+            latest_post
+            and latest_post.get("key") == route_state.get("last_post_key")
+            and not latest_post.get("source_reply_to_key")
+        ):
+            mapped_targets = get_mapped_targets_for_source_refs(
+                state,
+                route_id,
+                target_channels,
+                latest_post.get("source_message_refs") or [latest_post.get("key")],
+            )
+            missing_targets = [
+                chat_id
+                for chat_id in target_channels
+                if str(chat_id) not in mapped_targets
+            ]
+            if missing_targets:
+                print(
+                    f"[{route_id}] Recovery publish for latest post {latest_post['key']} -> missing targets:",
+                    ", ".join(safe_console_text(chat_id) for chat_id in missing_targets),
+                )
+                prepared_post = dict(latest_post)
+                prepared_post["route_id"] = route_id
+                prepared_post["source_channel"] = route["source_channel"]
+                prepared_post["target_channels"] = missing_targets
+                prepared_post = await rebuild_post_media(client, entity, prepared_post)
+                success = publish_post(prepared_post, state=state)
+                cleanup_media_items(prepared_post.get("media_items") or [])
+                if success:
+                    print(f"[{route_id}] Recovery publish completed")
+                    return
+                print(f"[{route_id}] Recovery publish failed")
         print(f"[{route_id}] No new posts")
         return
 
