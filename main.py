@@ -3495,7 +3495,10 @@ async def process_route(client, route, state):
         latest_post = await get_post_data(client, entity, route_id=route_id)
         if (
             latest_post
-            and latest_post.get("key") == route_state.get("last_post_key")
+            and (
+                latest_post.get("key") == route_state.get("last_post_key")
+                or route_mode(route_id) == "clone_template"
+            )
             and not latest_post.get("source_reply_to_key")
         ):
             mapped_targets = get_mapped_targets_for_source_refs(
