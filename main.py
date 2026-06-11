@@ -3456,7 +3456,11 @@ async def process_route(client, route, state):
     if await sync_route_daily_window(client, route, state, entity, current_source_signature):
         return
 
-    if route_startup_skip_backlog_enabled(route_id) and route_state.get("startup_guard_id") != PROCESS_BOOT_ID:
+    if route_state.get("startup_guard_id") and "startup_backlog_completed" not in route_state:
+        route_state["startup_backlog_completed"] = True
+        save_state(state)
+
+    if route_startup_skip_backlog_enabled(route_id) and not route_state.get("startup_backlog_completed"):
         latest_post_key = await get_latest_post_key(client, entity)
         latest_source_message_id = await get_latest_source_message_id(client, entity)
         if latest_post_key and latest_source_message_id:
@@ -3464,7 +3468,7 @@ async def process_route(client, route, state):
                 latest_source_message_id = max(int(startup_min_source_message_id), int(latest_source_message_id))
             route_state["last_post_key"] = latest_post_key
             route_state["source_signature"] = current_source_signature
-            route_state["startup_guard_id"] = PROCESS_BOOT_ID
+            route_state["startup_backlog_completed"] = True
             set_route_min_source_message_id(state, route_id, latest_source_message_id)
             save_state(state)
             print(f"[{route_id}] Startup backlog skipped at:", safe_console_text(latest_post_key))
