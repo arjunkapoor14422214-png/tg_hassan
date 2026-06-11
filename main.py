@@ -2772,26 +2772,15 @@ async def rebuild_post_media(client, entity, post_data):
         ]
 
     if route_mode(route_id) == "clone_template":
-        template_image = choose_clone_template_image(post_data.get("text", ""), chat_id=post_data.get("chat_id"))
-        if not template_image:
-            raise RuntimeError(
-                f"Clone template media mode is enabled but template image is missing for {post_data.get('key')}"
-            )
-
-        rebuilt_post = dict(post_data)
-        rebuilt_post["media_items"] = [{"type": "photo", "path": template_image, "persistent": True}]
-        rebuilt_post["photo_paths"] = []
-        rebuilt_post["media_count"] = 1
-        return rebuilt_post
+        # Clone-template routes can publish the same source post to multiple target
+        # channels, each with its own template image. Resolve the final template at
+        # send time using the target channel instead of the source channel.
+        return dict(post_data)
 
     if route_mode(route_id) == "custom_signal":
-        template_image = choose_signal_template_image(post_data.get("text", ""), chat_id=post_data.get("chat_id"))
-        if template_image:
-            rebuilt_post = dict(post_data)
-            rebuilt_post["media_items"] = [{"type": "photo", "path": template_image, "persistent": True}]
-            rebuilt_post["photo_paths"] = []
-            rebuilt_post["media_count"] = 1
-            return rebuilt_post
+        # Signal routes can also depend on target-specific media overrides, so keep
+        # the raw source payload here and resolve the final template per target later.
+        return dict(post_data)
 
     if expected_media_count <= 0:
         return post_data
@@ -3037,6 +3026,20 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
             {"type": "photo", "path": path}
             for path in (post_data.get("photo_paths") or [])
         ]
+
+    if route_mode(route_id) == "clone_template":
+        template_image = choose_clone_template_image(post_data.get("text", ""), chat_id=chat_id)
+        if not template_image:
+            print(f"Clone template media missing for target {safe_console_text(chat_id)}:", post_data.get("key"))
+            return None
+        media_items = [{"type": "photo", "path": template_image, "persistent": True}]
+        expected_media_count = 1
+
+    if route_mode(route_id) == "custom_signal":
+        template_image = choose_signal_template_image(post_data.get("text", ""), chat_id=chat_id)
+        if template_image:
+            media_items = [{"type": "photo", "path": template_image, "persistent": True}]
+            expected_media_count = 1
 
     with_buttons = (
         bool(post_data.get("with_buttons"))
