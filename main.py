@@ -583,6 +583,17 @@ def load_routes():
 ROUTES = load_routes()
 
 
+def find_downstream_routes(source_channel):
+    source_value = (source_channel or "").strip()
+    if not source_value:
+        return []
+    return [
+        route
+        for route in ROUTES
+        if route.get("source_channel") == source_value
+    ]
+
+
 def build_partner_block(chat_id=None):
     lines = []
 
@@ -3203,6 +3214,44 @@ def publish_post(post_data, use_ai=True, state=None):
     return True
 
 
+def publish_downstream_routes(post_data, upstream_route, state=None):
+    if not post_data or not upstream_route:
+        return
+
+    upstream_targets = post_data.get("target_channels") or upstream_route.get("target_channels") or []
+    if not upstream_targets:
+        return
+
+    for upstream_target in upstream_targets:
+        downstream_routes = find_downstream_routes(upstream_target)
+        if not downstream_routes:
+            continue
+
+        upstream_text_post = dict(post_data)
+        upstream_text_post["route_id"] = upstream_route["id"]
+        upstream_text = build_final_text(upstream_text_post, chat_id=upstream_target)
+
+        for downstream_route in downstream_routes:
+            if downstream_route["id"] == upstream_route["id"]:
+                continue
+
+            downstream_post = dict(post_data)
+            downstream_post["key"] = f"{post_data.get('key')}__fanout__{get_target_channel_env_suffix(upstream_target) or 'target'}"
+            downstream_post["route_id"] = downstream_route["id"]
+            downstream_post["source_channel"] = downstream_route["source_channel"]
+            downstream_post["target_channels"] = downstream_route["target_channels"]
+            downstream_post["text"] = upstream_text
+            downstream_post["processed_text"] = None
+            downstream_post["source_reply_to_key"] = None
+            downstream_post["source_message_refs"] = [downstream_post["key"]]
+
+            print(
+                f"[{upstream_route['id']}] Downstream fanout via {safe_console_text(upstream_target)} -> {downstream_route['id']}:",
+                ", ".join(safe_console_text(chat_id) for chat_id in downstream_route["target_channels"]),
+            )
+            publish_post(downstream_post, state=state)
+
+
 def send_post_to_review(post_data):
     if not REVIEW_MODE:
         return False
@@ -3557,6 +3606,8 @@ async def process_route(client, route, state):
             print(f"[{route_id}] Route: target channels")
             prepared_post = await rebuild_post_media(client, entity, prepared_post)
             success = publish_post(prepared_post, state=state)
+            if success and not REVIEW_MODE:
+                publish_downstream_routes(prepared_post, route, state=state)
             cleanup_media_items(prepared_post.get("media_items") or [])
 
         if success:
