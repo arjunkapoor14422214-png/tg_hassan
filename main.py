@@ -1103,13 +1103,39 @@ def build_custom_signal_post(text, chat_id=None, route_id=None):
     body = cleanup_signal_text(text)
     body = inject_cad_signal_line(body)
     body = format_custom_signal_blocks(body)
-    add_inline_link = random.choice([True, False])
+    signal_variant = classify_custom_signal_post(text)
+    add_inline_link = signal_variant == "goal"
     if add_inline_link:
         target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
         if target_link:
             body = f"{body}\n\n{target_link}".strip()
     body = apply_promocode_rule(body, chat_id=chat_id, route_id=route_id)
     return body, add_inline_link
+
+
+def classify_custom_signal_post(text):
+    body = (text or "").lower()
+    live_markers = [
+        "bet:",
+        "💵",
+        "over ",
+        "under ",
+        "my bet",
+        "my stake",
+        "backing this prediction",
+    ]
+    has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
+    if (
+        "prediction successful" in body
+        or "congratulations" in body
+        or "successful!" in body
+        or "score:" in body
+        or bool(re.search(r"\bgoal\b\s*!{1,3}", body))
+    ):
+        return "goal"
+    if any(marker in body for marker in live_markers) or has_stake_amount:
+        return "live"
+    return "live"
 
 
 def choose_clone_template_image(text, chat_id=None):
@@ -1164,28 +1190,7 @@ def choose_signal_template_image(text, chat_id=None):
     if not live_template and not goal_template:
         return ""
 
-    body = (text or "").lower()
-    live_markers = [
-        "bet:",
-        "over ",
-        "under ",
-        "my bet",
-        "my stake",
-        "backing this prediction",
-    ]
-    goal_markers = [
-        "goal",
-        "prediction successful",
-        "congratulations",
-        "successful!",
-    ]
-    has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
-    if any(marker in body for marker in live_markers) or has_stake_amount:
-        template_path = live_template
-    elif any(marker in body for marker in goal_markers):
-        template_path = goal_template
-    else:
-        template_path = live_template or goal_template
+    template_path = live_template if classify_custom_signal_post(text) == "live" else goal_template
     return template_path if template_path and os.path.exists(template_path) else ""
 
 
@@ -2722,6 +2727,9 @@ def cleanup_temp_media_dir():
             print("Startup cleanup warning:", str(e))
 
 
+RECOVERY_LOOKBACK_POSTS = max(3, int(os.getenv("RECOVERY_LOOKBACK_POSTS", "8")))
+
+
 async def get_latest_post_key(client, entity):
     messages = await client.get_messages(entity, limit=1)
     if not messages:
@@ -3062,6 +3070,31 @@ async def get_new_posts_data(client, entity, last_post_key=None, limit=50, min_s
             not min_source_message_id
             or int(post_data.get("source_message_id") or 0) > int(min_source_message_id)
         ):
+            posts.append(post_data)
+
+    posts.sort(key=lambda post: post.get("source_message_id", 0))
+    return posts
+
+
+async def get_recent_posts_data(client, entity, limit=10, route_id=None):
+    messages = await get_recent_messages_resilient(client, entity, limit=limit)
+    if not messages:
+        return []
+
+    grouped_messages = {}
+    ordered_keys = []
+
+    for message in messages:
+        post_key = get_post_key(message)
+        if post_key not in grouped_messages:
+            grouped_messages[post_key] = []
+            ordered_keys.append(post_key)
+        grouped_messages[post_key].append(message)
+
+    posts = []
+    for post_key in reversed(ordered_keys):
+        post_data = await build_post_data_from_messages(client, grouped_messages[post_key], route_id=route_id)
+        if post_data:
             posts.append(post_data)
 
     posts.sort(key=lambda post: post.get("source_message_id", 0))
@@ -3609,38 +3642,51 @@ async def process_route(client, route, state):
     print(f"[{route_id}] State key:", route_state.get("last_post_key"))
 
     if not new_posts:
-        latest_post = await get_post_data(client, entity, route_id=route_id)
-        if (
-            latest_post
-            and not latest_post.get("source_reply_to_key")
-        ):
+        recent_posts = await get_recent_posts_data(
+            client,
+            entity,
+            limit=RECOVERY_LOOKBACK_POSTS,
+            route_id=route_id,
+        )
+        recovery_published = False
+        for recent_post in recent_posts:
+            if recent_post.get("source_reply_to_key"):
+                continue
             mapped_targets = get_mapped_targets_for_source_refs(
                 state,
                 route_id,
                 target_channels,
-                latest_post.get("source_message_refs") or [latest_post.get("key")],
+                recent_post.get("source_message_refs") or [recent_post.get("key")],
             )
             missing_targets = [
                 chat_id
                 for chat_id in target_channels
                 if str(chat_id) not in mapped_targets
             ]
-            if missing_targets:
-                print(
-                    f"[{route_id}] Recovery publish for latest post {latest_post['key']} -> missing targets:",
-                    ", ".join(safe_console_text(chat_id) for chat_id in missing_targets),
-                )
-                prepared_post = dict(latest_post)
-                prepared_post["route_id"] = route_id
-                prepared_post["source_channel"] = route["source_channel"]
-                prepared_post["target_channels"] = missing_targets
-                prepared_post = await rebuild_post_media(client, entity, prepared_post)
-                success = publish_post(prepared_post, state=state)
-                cleanup_media_items(prepared_post.get("media_items") or [])
-                if success:
-                    print(f"[{route_id}] Recovery publish completed")
-                    return
-                print(f"[{route_id}] Recovery publish failed")
+            if not missing_targets:
+                continue
+
+            print(
+                f"[{route_id}] Recovery publish for recent post {recent_post['key']} -> missing targets:",
+                ", ".join(safe_console_text(chat_id) for chat_id in missing_targets),
+            )
+            prepared_post = dict(recent_post)
+            prepared_post["route_id"] = route_id
+            prepared_post["source_channel"] = route["source_channel"]
+            prepared_post["target_channels"] = missing_targets
+            prepared_post = await rebuild_post_media(client, entity, prepared_post)
+            success = publish_post(prepared_post, state=state)
+            cleanup_media_items(prepared_post.get("media_items") or [])
+            if success:
+                recovery_published = True
+                print(f"[{route_id}] Recovery publish completed for {recent_post['key']}")
+                continue
+
+            print(f"[{route_id}] Recovery publish failed for {recent_post['key']}")
+            return
+
+        if recovery_published:
+            return
         print(f"[{route_id}] No new posts")
         return
 
