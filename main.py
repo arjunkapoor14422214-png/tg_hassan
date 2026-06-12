@@ -1881,7 +1881,8 @@ def process_text_with_ai(text, chat_id=None):
             print("AI numeric mismatch detected, retrying with strict numeric constraints")
             ai_text = request_ai_text(user_prompt, strict_numbers=True, chat_id=chat_id)
             if not output_uses_supported_numbers(text, ai_text):
-                raise AIHoldError("AI introduced unsupported numeric values")
+                print("AI numeric mismatch persisted, using source-text fallback")
+                return text
 
         print("AI text prepared")
         return ai_text
