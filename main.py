@@ -1129,11 +1129,32 @@ def choose_clone_template_image(text, chat_id=None):
         "vou de ",
     ]
     has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
+    is_live = any(marker in body for marker in live_markers) or has_stake_amount
     override = get_target_channel_override(chat_id)
     live_template = override.get("clone_template_live") or TEMPLATE_IMAGE_LIVE
     goal_template = override.get("clone_template_goal") or TEMPLATE_IMAGE_GOAL
-    template_path = live_template if (any(marker in body for marker in live_markers) or has_stake_amount) else goal_template
+    template_path = live_template if is_live else goal_template
     return template_path if template_path and os.path.exists(template_path) else ""
+
+
+def classify_clone_template_post(text):
+    body = (text or "").lower()
+    live_markers = [
+        "bet:",
+        "my stake",
+        "my bet is",
+        "backing this prediction",
+        "stake for this pick",
+        "got ",
+        "punto ",
+        "puntata ",
+        "vado con ",
+        "entrando nesta previsao",
+        "entrada para este palpite",
+        "vou de ",
+    ]
+    has_stake_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s?(?:cad|eur|usd|gbp|brl|try|bdt|inr|aed)\b", body))
+    return "live" if (any(marker in body for marker in live_markers) or has_stake_amount) else "goal"
 
 
 def choose_signal_template_image(text, chat_id=None):
@@ -1266,6 +1287,7 @@ def rewrite_clone_template_text(text, chat_id=None, route_id=None):
 
     target_link = get_target_channel_override(chat_id).get("button3_url") or BUTTON3_URL
     target_promocode = get_target_promocode_text(chat_id)
+    clone_variant = classify_clone_template_post(text)
 
     rewritten_lines = []
     saw_promocode = False
@@ -1276,14 +1298,15 @@ def rewrite_clone_template_text(text, chat_id=None, route_id=None):
             saw_promocode = True
             continue
         if SOURCE_LINK_PATTERN.search(line):
-            rewritten_lines.append(SOURCE_LINK_PATTERN.sub(target_link, line))
+            if clone_variant == "goal":
+                rewritten_lines.append(SOURCE_LINK_PATTERN.sub(target_link, line))
             continue
         localized_line = rewrite_clone_stake_line(line, chat_id=chat_id)
         localized_line = translate_clone_template_line(localized_line, chat_id=chat_id)
         rewritten_lines.append(localized_line)
 
     body = "\n".join(rewritten_lines).strip()
-    if target_link and target_link not in body and SOURCE_LINK_PATTERN.search(text or ""):
+    if clone_variant == "goal" and target_link and target_link not in body:
         body = f"{body}\n\n{target_link}".strip()
     if not saw_promocode:
         body = apply_promocode_rule(body, chat_id=chat_id, route_id=route_id)
@@ -1855,7 +1878,7 @@ def process_text_with_ai(text, chat_id=None):
             if not output_uses_supported_numbers(text, ai_text):
                 raise AIHoldError("AI introduced unsupported numeric values")
 
-        print("AI Ñ‚ÐµÐºÑÑ‚ Ð¿Ð¾Ð´Ð³Ð¾Ñ‚Ð¾Ð²Ð»ÐµÐ½")
+        print("AI text prepared")
         return ai_text
 
     except AIHoldError:
@@ -1875,7 +1898,7 @@ def build_final_text(post_data, use_ai=True, chat_id=None):
         return custom_text
 
     if mode == "clone_template":
-        post_data["has_inline_custom_link"] = True
+        post_data["has_inline_custom_link"] = classify_clone_template_post(source_text) == "goal"
         return rewrite_clone_template_text(source_text, chat_id=chat_id, route_id=route_id)
 
     inline_partners = bool(post_data.get("inline_partners"))
@@ -3108,6 +3131,9 @@ def publish_post_to_channel(post_data, chat_id, reply_to_message_id=None):
         and not post_contains_inline_partners(text, chat_id=chat_id)
         and not bool(post_data.get("has_inline_custom_link"))
     )
+
+    if route_mode(route_id) == "clone_template":
+        with_buttons = classify_clone_template_post(post_data.get("text", "")) == "live"
 
     if expected_media_count and len(media_items) < expected_media_count:
         print(
