@@ -3101,6 +3101,57 @@ async def get_recent_posts_data(client, entity, limit=10, route_id=None):
     posts.sort(key=lambda post: post.get("source_message_id", 0))
     return posts
 
+
+async def recover_recent_missing_posts(client, entity, route, state):
+    route_id = route["id"]
+    target_channels = route["target_channels"]
+    recent_posts = await get_recent_posts_data(
+        client,
+        entity,
+        limit=RECOVERY_LOOKBACK_POSTS,
+        route_id=route_id,
+    )
+
+    recovery_published = False
+    for recent_post in recent_posts:
+        if recent_post.get("source_reply_to_key"):
+            continue
+
+        mapped_targets = get_mapped_targets_for_source_refs(
+            state,
+            route_id,
+            target_channels,
+            recent_post.get("source_message_refs") or [recent_post.get("key")],
+        )
+        missing_targets = [
+            chat_id
+            for chat_id in target_channels
+            if str(chat_id) not in mapped_targets
+        ]
+        if not missing_targets:
+            continue
+
+        print(
+            f"[{route_id}] Recovery publish for recent post {recent_post['key']} -> missing targets:",
+            ", ".join(safe_console_text(chat_id) for chat_id in missing_targets),
+        )
+        prepared_post = dict(recent_post)
+        prepared_post["route_id"] = route_id
+        prepared_post["source_channel"] = route["source_channel"]
+        prepared_post["target_channels"] = missing_targets
+        prepared_post = await rebuild_post_media(client, entity, prepared_post)
+        success = publish_post(prepared_post, state=state)
+        cleanup_media_items(prepared_post.get("media_items") or [])
+        if success:
+            recovery_published = True
+            print(f"[{route_id}] Recovery publish completed for {recent_post['key']}")
+            continue
+
+        print(f"[{route_id}] Recovery publish failed for {recent_post['key']}")
+        return False
+
+    return recovery_published
+
 def response_ok(response):
     try:
         data = response.json()
@@ -3631,6 +3682,11 @@ async def process_route(client, route, state):
         ", ".join(safe_console_text(chat_id) for chat_id in route["target_channels"]),
     )
 
+    recovery_result = await recover_recent_missing_posts(client, entity, route, state)
+    if recovery_result is False:
+        print(f"[{route_id}] Recent recovery failed")
+        return
+
     new_posts = await get_new_posts_data(
         client,
         entity,
@@ -3643,50 +3699,7 @@ async def process_route(client, route, state):
     print(f"[{route_id}] State key:", route_state.get("last_post_key"))
 
     if not new_posts:
-        recent_posts = await get_recent_posts_data(
-            client,
-            entity,
-            limit=RECOVERY_LOOKBACK_POSTS,
-            route_id=route_id,
-        )
-        recovery_published = False
-        for recent_post in recent_posts:
-            if recent_post.get("source_reply_to_key"):
-                continue
-            mapped_targets = get_mapped_targets_for_source_refs(
-                state,
-                route_id,
-                target_channels,
-                recent_post.get("source_message_refs") or [recent_post.get("key")],
-            )
-            missing_targets = [
-                chat_id
-                for chat_id in target_channels
-                if str(chat_id) not in mapped_targets
-            ]
-            if not missing_targets:
-                continue
-
-            print(
-                f"[{route_id}] Recovery publish for recent post {recent_post['key']} -> missing targets:",
-                ", ".join(safe_console_text(chat_id) for chat_id in missing_targets),
-            )
-            prepared_post = dict(recent_post)
-            prepared_post["route_id"] = route_id
-            prepared_post["source_channel"] = route["source_channel"]
-            prepared_post["target_channels"] = missing_targets
-            prepared_post = await rebuild_post_media(client, entity, prepared_post)
-            success = publish_post(prepared_post, state=state)
-            cleanup_media_items(prepared_post.get("media_items") or [])
-            if success:
-                recovery_published = True
-                print(f"[{route_id}] Recovery publish completed for {recent_post['key']}")
-                continue
-
-            print(f"[{route_id}] Recovery publish failed for {recent_post['key']}")
-            return
-
-        if recovery_published:
+        if recovery_result:
             return
         print(f"[{route_id}] No new posts")
         return
