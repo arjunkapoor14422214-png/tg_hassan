@@ -353,8 +353,10 @@ LATIN_TITLES = [
     "Bugungi stavkam:",
 ]
 
-STATE_FILE = "data/state.json"
-PENDING_FILE = "data/pending.json"
+DATA_DIR = os.getenv("DATA_DIR", "data").strip() or "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+STATE_FILE = os.path.join(DATA_DIR, "state.json")
+PENDING_FILE = os.path.join(DATA_DIR, "pending.json")
 CHECK_INTERVAL = 10
 NEW_POST_SCAN_LIMIT = 200
 TELEGRAM_REQUEST_RETRIES = 3
@@ -2710,17 +2712,17 @@ def cleanup_media_items(media_items):
 
 
 def cleanup_temp_media_dir():
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
     temp_prefixes = ("photo_", "document_")
     temp_suffixes = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4")
 
-    for file_name in os.listdir("data"):
+    for file_name in os.listdir(DATA_DIR):
         if not file_name.startswith(temp_prefixes):
             continue
         if not file_name.lower().endswith(temp_suffixes):
             continue
 
-        file_path = os.path.join("data", file_name)
+        file_path = os.path.join(DATA_DIR, file_name)
         try:
             if os.path.isfile(file_path):
                 os.remove(file_path)
@@ -2764,10 +2766,12 @@ async def ensure_client_connected(client):
         return False
 
 
-async def download_media_with_retries(client, message, file="data/"):
+async def download_media_with_retries(client, message, file=None):
+    target_dir = file or DATA_DIR
+    os.makedirs(target_dir, exist_ok=True)
     for attempt in range(1, MEDIA_DOWNLOAD_RETRIES + 1):
         try:
-            media_path = await client.download_media(message, file=file)
+            media_path = await client.download_media(message, file=target_dir)
             if media_path and os.path.exists(media_path):
                 return media_path
 
@@ -2913,7 +2917,7 @@ async def rebuild_post_media(client, entity, post_data):
         if not media_type:
             continue
 
-        media_path = await download_media_with_retries(client, message, file="data/")
+        media_path = await download_media_with_retries(client, message)
         if media_path:
             rebuilt_media_items.append({"type": media_type, "path": media_path})
 
@@ -3763,7 +3767,7 @@ async def main():
     if SESSION_STRING:
         client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
     else:
-        client = TelegramClient("data/session_name", int(API_ID), API_HASH)
+        client = TelegramClient(os.path.join(DATA_DIR, "session_name"), int(API_ID), API_HASH)
 
     await client.start()
     cleanup_temp_media_dir()
